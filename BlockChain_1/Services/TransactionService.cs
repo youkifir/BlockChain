@@ -1,9 +1,6 @@
 ﻿using BlockChain_1.Models;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace BlockChain_1.Services
 {
@@ -11,56 +8,44 @@ namespace BlockChain_1.Services
     {
         private readonly WalletService _walletService;
 
-        public TransactionService(List<Block> blockChain)
+        public TransactionService(List<Block> chain)
         {
-            _walletService = new WalletService(blockChain);
+            _walletService = new WalletService(chain);
         }
-        public Transaction CreateTransaction(Wallet walletFrom, string to, decimal amount, byte[] sendePublicKey)
-        {
-            var balance = _walletService.GetBalance(walletFrom.Address);
-            if (balance < amount)
-            {
-                throw new ArgumentException("Insufficient balance.");
-            }
-            var tx = new Transaction(walletFrom.Address, to, amount, sendePublicKey);
-            tx.Signature = walletFrom.Sign(tx.GetDataToSign());
 
-            var validation = ValidateTransaction(tx);
-            if (!validation.IsValid)
-            {
-                throw new ArgumentException(validation.ErrorMessage);
-            }
+        public Transaction CreateTransaction(Wallet sender, string to, decimal amount)
+        {
+            var balance = _walletService.GetBalance(sender.Address);
+            if (balance < amount)
+                throw new ArgumentException("Insufficient balance.");
+
+            var tx = new Transaction(sender.Address, to, amount, sender.PublicKey);
+            tx.Signature = sender.Sign(tx.GetDataToSign());
+
+            var (isValid, error) = ValidateTransaction(tx);
+            if (!isValid)
+                throw new ArgumentException(error);
+
             return tx;
         }
 
-        public (bool IsValid, string ErrorMessage) ValidateTransaction(Transaction transaction)
+        public (bool IsValid, string ErrorMessage) ValidateTransaction(Transaction tx)
         {
-            if (transaction == null)
-            {
-                return (false, "Transaction can not be null.");
-            }
-            if (string.IsNullOrEmpty(transaction.From))
-            {
-                return (false, "Sender cannot be empty");
-            }
-            if (string.IsNullOrEmpty(transaction.To))
-            {
-                return (false, "Recipient cannot be empty");
-            }
-            if (transaction.Amount <= 0)
-            {
-                return (false, "Amount must be greater than zero");
-            }
-            if(transaction.From == "COINBASE")
-            {
-                return(true, "");
-            }
+            if (tx == null)
+                return (false, "Transaction cannot be null.");
+            if (string.IsNullOrEmpty(tx.From))
+                return (false, "Sender cannot be empty.");
+            if (string.IsNullOrEmpty(tx.To))
+                return (false, "Recipient cannot be empty.");
+            if (tx.Amount <= 0)
+                return (false, "Amount must be greater than zero.");
+            if (tx.From == "COINBASE")
+                return (true, string.Empty);
 
-            bool isSignatureValid = _walletService.VerifySignature(transaction.From, transaction.GetDataToSign(), transaction.Signature);
-            if (!isSignatureValid)
-            {
+            bool signatureValid = _walletService.VerifySignature(tx.From, tx.GetDataToSign(), tx.Signature);
+            if (!signatureValid)
                 return (false, "Invalid transaction signature.");
-            }
+
             return (true, string.Empty);
         }
     }

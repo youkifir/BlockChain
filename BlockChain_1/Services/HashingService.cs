@@ -1,10 +1,6 @@
 ﻿using BlockChain_1.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace BlockChain_1.Services
 {
@@ -12,19 +8,20 @@ namespace BlockChain_1.Services
     {
         public string ComputeHash(Block block)
         {
-            var totalHash = "";
-            foreach(var item in block.Transactions)
+            var transactionHashes = new StringBuilder();
+            foreach (var tx in block.Transactions)
             {
-                totalHash += ComputeHash(item.ToRowString());
+                transactionHashes.Append(HashString(tx.ToHashString()));
             }
-            var blockData = $"{block.Index}{block.TimeStamp.ToString("O")}{totalHash}{block.PreviousHash}{block.Nonce}";
-            return ComputeHash(blockData);
+
+            var blockData = $"{block.Index}{block.TimeStamp:O}{transactionHashes}{block.PreviousHash}{block.Nonce}";
+            return HashString(blockData);
         }
-        private string ComputeHash(string input)
+
+        private string HashString(string input)
         {
             byte[] inputBytes = Encoding.UTF8.GetBytes(input);
             byte[] hashBytes = SHA256.HashData(inputBytes);
-
             return Convert.ToHexString(hashBytes);
         }
     }

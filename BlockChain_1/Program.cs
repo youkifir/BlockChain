@@ -38,7 +38,7 @@ namespace BlockChain_1
 
             while (true)
             {
-                Console.Write("\nВыберите опцию: ");
+                Console.Write("\nChoose an option: ");
                 var choice = Console.ReadLine();
 
                 switch (choice)
@@ -51,7 +51,7 @@ namespace BlockChain_1
                     case "2":
                         try
                         {
-                            var transaction1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 10m, walletAlice.PublicKey); // Create transaction from Alice to Bob
+                            var transaction1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 10m); // Create transaction from Alice to Bob
                             blockChain1.AddTransactionToMemPool(transaction1);
                         }
                         catch (Exception ex)
@@ -70,11 +70,11 @@ namespace BlockChain_1
 
                     case "5":
                         bool isValid = blockChain1.IsValid();
-                        displayService.PrintValidationResult(isValid);
+                        displayService.PrintChainValidity(isValid);
                         break;
 
                     case "6":
-                        displayService.PrintBlockChain(blockChain1.Chain); // Print blockchain
+                        displayService.PrintChain(blockChain1.Chain); // Print blockchain
                         break;
 
                     case "7":
@@ -88,7 +88,7 @@ namespace BlockChain_1
                         }
                         else
                         {
-                            Console.WriteLine("Нечего изменять — сначала добавьте блок с транзакцией (пункт 2).");
+                            Console.WriteLine("Use option 2 to add a transaction first.");
                         }
                         break;
 

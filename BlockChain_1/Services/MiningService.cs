@@ -2,8 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,36 +10,13 @@ namespace BlockChain_1.Services
     public class MiningService
     {
         private readonly HashingService _hashingService;
+
         public MiningService(HashingService hashingService)
         {
             _hashingService = hashingService;
         }
 
-        public long MineBlock(Block block, int difficulty)
-        {
-            string target = new string('0', difficulty);
-
-            var stopwatch = Stopwatch.StartNew();
-            while (true)
-            {
-                block.Hash = _hashingService.ComputeHash(block);
-                if (block.Hash.StartsWith(target))
-                {
-                    stopwatch.Stop();
-                    block.MiningDuration = stopwatch.Elapsed.TotalSeconds;
-
-                    return block.Nonce;
-                }
-                block.Nonce++;
-
-                if (block.Nonce % 10000 == 0)
-                {
-                    Console.Write($".");
-                }
-            }
-        }
-
-        public async Task<long?> MineBlockAsync(Block block, int difficulty, CancellationToken token)
+        public async Task<bool> MineBlockAsync(Block block, int difficulty, CancellationToken token = default)
         {
             string target = new string('0', difficulty);
             int workers = Environment.ProcessorCount;
@@ -51,19 +26,15 @@ namespace BlockChain_1.Services
             int found = 0;
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-            List<Task> tasks = new();
-
+            var tasks = new List<Task>();
             var stopwatch = Stopwatch.StartNew();
 
             for (int workerId = 0; workerId < workers; workerId++)
             {
-                int localWorker = workerId;
-
-                // Создаем глубокую или поверхностную копию блока для каждого потока,
-                // чтобы избежать Race Condition при изменении block.Nonce и чтении в ComputeHash
+                int localId = workerId;
                 var localBlock = new Block(block.Index, block.TimeStamp, block.Transactions, block.PreviousHash)
                 {
-                    Nonce = localWorker
+                    Nonce = localId
                 };
 
                 tasks.Add(Task.Run(() =>
@@ -92,10 +63,7 @@ namespace BlockChain_1.Services
             {
                 await Task.WhenAll(tasks);
             }
-            catch (OperationCanceledException)
-            {
-                // Игнорируем исключение отмены, так как это ожидаемое поведение
-            }
+            catch (OperationCanceledException) { }
 
             stopwatch.Stop();
 
@@ -104,12 +72,11 @@ namespace BlockChain_1.Services
                 block.Nonce = (int)foundNonce;
                 block.Hash = foundHash;
                 block.MiningDuration = stopwatch.Elapsed.TotalSeconds;
-
-                return foundNonce;
+                return true;
             }
 
             token.ThrowIfCancellationRequested();
-            return null;
+            return false;
         }
     }
 }

@@ -1,9 +1,5 @@
-﻿using BlockChain_1.Services;
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace BlockChain_1.Models
 {
@@ -16,6 +12,7 @@ namespace BlockChain_1.Models
         public int Nonce { get; set; }
         public double MiningDuration { get; set; }
         public string Hash { get; set; }
+
         public Block(int index, DateTime timeStamp, List<Transaction> transactions, string previousHash)
         {
             Index = index;

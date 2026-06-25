@@ -1,8 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 
 namespace BlockChain_1.Models
 {
@@ -17,20 +14,6 @@ namespace BlockChain_1.Models
         public byte[] SenderPublicKey { get; set; }
         public byte[] Signature { get; set; }
 
-        public string ToRowString()
-        {
-            if(Signature != null)
-            {
-                return $"{Id} | {From} -> {To} | Amount: {Amount} | Time: {TimeStamp.ToString("O")} {Convert.ToHexString(Signature)}";
-            }
-            return $"{Id} | {From} -> {To} | Amount: {Amount} | Time: {TimeStamp.ToString("O")} | Fee: {Fee}";
-        }
-        public byte[] GetDataToSign()
-        {
-            string raw = $"{Id}{From}{To}{Amount}{TimeStamp:O}";
-            return Encoding.UTF8.GetBytes(raw);
-        }
-
         public Transaction(string from, string to, decimal amount, byte[] senderPublicKey)
         {
             Id = Guid.NewGuid().ToString();
@@ -39,6 +22,18 @@ namespace BlockChain_1.Models
             Amount = amount;
             TimeStamp = DateTime.UtcNow;
             SenderPublicKey = senderPublicKey;
+        }
+
+        public string ToHashString()
+        {
+            var sig = Signature != null ? Convert.ToHexString(Signature) : string.Empty;
+            return $"{Id}|{From}->{To}|{Amount}|{TimeStamp:O}|{Fee}|{sig}";
+        }
+
+        public byte[] GetDataToSign()
+        {
+            string raw = $"{Id}{From}{To}{Amount}{TimeStamp:O}";
+            return Encoding.UTF8.GetBytes(raw);
         }
     }
 }

@@ -12,25 +12,45 @@ namespace BlockChain_1.Services
         private readonly HashingService _hashingService;
         private readonly MiningService _miningService;
         private readonly TransactionService _transactionService;
+        private WalletService wallet { get; set; }
+        private readonly FileStorageService _fileStorageService;
 
         public List<Block> Chain { get; set; }
+        private readonly List<Transaction> _pendingTransactions = new List<Transaction>();
+
         public int Difficulty { get; private set; }
         public double TargetBlockTime { get; set; } = 10;
         public int AdjustmentInterval { get; set; } = 3;
         private decimal _rewardAmount { get; set; } = 50;
         private int maxTransactionsAmount { get; set; } = 10;
-        private List<Transaction> _pendingTransactions = new List<Transaction>();
-        private WalletService wallet { get; set; }
+
+
         public BlockChainService(int initialDifficulty = 6)
         {
             Chain = new List<Block>();
+
             _hashingService = new HashingService();
             _miningService = new MiningService(_hashingService);
             _transactionService = new TransactionService(Chain);
             wallet = new WalletService(Chain);
             Difficulty = initialDifficulty;
+            _fileStorageService = new FileStorageService();
 
-            CreateGenesisBlock();
+            var loadedChain = _fileStorageService.LoadBlockchain();
+
+            if (loadedChain != null && loadedChain.Count > 0)
+            {
+                Chain = loadedChain;
+                _transactionService = new TransactionService(Chain);
+                wallet = new WalletService(Chain);
+            }
+            else
+            {
+                CreateGenesisBlock();
+                _fileStorageService.SaveBlockchain(Chain);
+            }
+
+
         }
 
         private void CreateGenesisBlock()
@@ -63,9 +83,11 @@ namespace BlockChain_1.Services
                 sortedTransactions,
                 lastBlock.Hash);
 
-            _miningService.MineBlock(newBlock, Difficulty);
+            await _miningService.MineBlockAsync(newBlock, Difficulty);
 
             Chain.Add(newBlock);
+
+            _fileStorageService.SaveBlockchain(Chain);
 
             _pendingTransactions.RemoveAll(t => sortedTransactions.Contains(t));
 
