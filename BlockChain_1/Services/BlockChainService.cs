@@ -12,7 +12,7 @@ namespace BlockChain_1.Services
         private readonly HashingService _hashingService;
         private readonly MiningService _miningService;
         private readonly TransactionService _transactionService;
-        private WalletService wallet { get; set; }
+        private WalletService _walletService { get; set; }
         private readonly FileStorageService _fileStorageService;
 
         public List<Block> Chain { get; set; }
@@ -32,7 +32,7 @@ namespace BlockChain_1.Services
             _hashingService = new HashingService();
             _miningService = new MiningService(_hashingService);
             _transactionService = new TransactionService(Chain);
-            wallet = new WalletService(Chain);
+            _walletService = new WalletService(Chain);
             Difficulty = initialDifficulty;
             _fileStorageService = new FileStorageService();
 
@@ -42,7 +42,7 @@ namespace BlockChain_1.Services
             {
                 Chain = loadedChain;
                 _transactionService = new TransactionService(Chain);
-                wallet = new WalletService(Chain);
+                _walletService = new WalletService(Chain);
             }
             else
             {
@@ -105,7 +105,7 @@ namespace BlockChain_1.Services
             }
             if (transaction.From != "COINBASE")
             {
-                var senderBalance = wallet.GetBalance(transaction.From);
+                var senderBalance = _walletService.GetBalance(transaction.From);
                 if (senderBalance < transaction.Amount + transaction.Fee)
                 {
                     throw new InvalidOperationException($"Insufficient balance for transaction: {transaction.Id}");
@@ -159,6 +159,22 @@ namespace BlockChain_1.Services
             {
                 var currentBlock = Chain[i];
                 var previousBlock = Chain[i - 1];
+                foreach (var tx in currentBlock.Transactions)
+                {
+                    if(tx.From == "COINBASE")
+                    {
+                        continue;
+                    }
+                    
+                    bool isSignatureValid = _walletService.VerifySignature(tx.From, tx.GetDataToSign(), tx.Signature);
+
+                    if(!isSignatureValid)
+                    {
+                        Console.WriteLine($"[CRITICAL ERROR] Invalid signature in block {Chain[i]} | transaction: {tx.Id}");
+                        return false;
+                    }
+                }
+
 
                 if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock)) return false;
                 if (currentBlock.PreviousHash != previousBlock.Hash) return false;
