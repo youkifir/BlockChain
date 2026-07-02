@@ -12,12 +12,25 @@ namespace BlockChain_1
         static async Task Main(string[] args)
         {
             Console.OutputEncoding = Encoding.UTF8;
-            
+            Console.WriteLine("Input port number for P2P service: ");
+            var portInput = Console.ReadLine();
+
             //Services
             var displayService = new BlockChainDisplayService();
             var blockChain1 = new BlockChainService(initialDifficulty: 4);
             var transactionService = new TransactionService(blockChain1.Chain);
             var walletService = new WalletService(blockChain1.Chain);
+
+            var p2pService = new TcpP2pService(blockChain1, int.Parse(portInput));
+            p2pService.Start();
+
+            Console.WriteLine("Input port for connect to other node: ");
+            var peerPort = int.Parse(Console.ReadLine());
+            if (peerPort != 0)
+            {
+                await p2pService.ConnectToPeerAsync("127.0.0.1", peerPort);
+                Console.WriteLine("Connected to peer.");
+            }
 
             //Show menu
             Console.WriteLine("--- BlockChain Menu ---");
@@ -29,6 +42,7 @@ namespace BlockChain_1
             Console.WriteLine("6. Print Blockchain");
             Console.WriteLine("7. Exit");
             Console.WriteLine("8. Change Blockchain");
+            Console.WriteLine("9. Test: знайти індекс підробленого блоку");
 
             //Wallets
             var walletAlice = walletService.CreateWallet("Alice");
@@ -44,7 +58,7 @@ namespace BlockChain_1
                 switch (choice)
                 {
                     case "1":
-                        await blockChain1.AddBlockAsync(walletAlice.Address); // Mine block with Alice's address as the miner
+                        await blockChain1.MineBlock(walletAlice.Address); // Mine block with Alice's address as the miner
                         Console.WriteLine("Block mined successfully.");
                         break;
 
@@ -92,12 +106,70 @@ namespace BlockChain_1
                         }
                         break;
 
+                    case "9":
+                        await TestGetInvalidBlockIndex(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+
                     default:
                         Console.WriteLine("Choose correct option");
                         break;
                 }
             }
 
+        }
+
+        //Test
+        static async Task TestGetInvalidBlockIndex(
+            BlockChainService blockChain,
+            TransactionService transactionService,
+            Wallet walletAlice,
+            Wallet walletBob)
+        {
+            Console.WriteLine("\n=== Тест: пошук пошкодженого блоку ===");
+
+            const int targetChainLength = 5;
+            while (blockChain.Chain.Count < targetChainLength)
+            {
+                try
+                {
+                    var tx = transactionService.CreateTransaction(walletAlice, walletBob.Address, 5m);
+                    blockChain.AddTransactionToMemPool(tx);
+                }
+                catch
+                {
+                }
+
+                await blockChain.MineBlock(walletAlice.Address);
+                Console.WriteLine($"Замайнено блок №{blockChain.Chain.Count - 1}. Всього блоків: {blockChain.Chain.Count}");
+            }
+
+            int checkBeforeTamper = blockChain.GetInvalidBlockIndex();
+            Console.WriteLine(checkBeforeTamper == -1
+                ? "До підробки: ланцюг цілісний, порушень не знайдено."
+                : $"До підробки: несподівано знайдено пошкодження в блоці {checkBeforeTamper}.");
+
+            const int tamperedBlockIndex = 2;
+            if (blockChain.Chain.Count > tamperedBlockIndex && blockChain.Chain[tamperedBlockIndex].Transactions.Count > 0)
+            {
+                blockChain.Chain[tamperedBlockIndex].Transactions[0].Amount = 999999;
+                Console.WriteLine($"Дані блоку №{tamperedBlockIndex} навмисно підроблено.");
+            }
+            else
+            {
+                Console.WriteLine($"У блоці №{tamperedBlockIndex} немає транзакцій для підробки.");
+                return;
+            }
+
+            int invalidIndex = blockChain.GetInvalidBlockIndex();
+
+            if (invalidIndex == -1)
+            {
+                Console.WriteLine("Ланцюг цілісний, порушень не знайдено.");
+            }
+            else
+            {
+                Console.WriteLine($"Увага! Знайдено порушення цілісності. Підроблений блок під номером: {invalidIndex}.");
+            }
         }
     }
 }

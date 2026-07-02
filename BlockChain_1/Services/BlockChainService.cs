@@ -23,6 +23,7 @@ namespace BlockChain_1.Services
         public int AdjustmentInterval { get; set; } = 3;
         private decimal _rewardAmount { get; set; } = 50;
         private int maxTransactionsAmount { get; set; } = 10;
+        private int _halvingInterval { get; set; } = 2;
 
 
         public BlockChainService(int initialDifficulty = 6)
@@ -52,15 +53,13 @@ namespace BlockChain_1.Services
 
 
         }
-
         private void CreateGenesisBlock()
         {
             Block genesisBlock = new Block(0, DateTime.UtcNow, new List<Transaction>(), "0");
             genesisBlock.Hash = _hashingService.ComputeHash(genesisBlock);
             Chain.Add(genesisBlock);
         }
-
-        public async Task AddBlockAsync(string minerAddress)
+        public async Task MineBlock(string minerAddress)
         {
             foreach (Transaction transaction in _pendingTransactions)
             {
@@ -71,7 +70,7 @@ namespace BlockChain_1.Services
             }
 
             var sortedTransactions = _pendingTransactions.OrderByDescending(t => t.Fee).Take(maxTransactionsAmount).ToList();
-            var totalReward = sortedTransactions.Sum(t => t.Fee) + _rewardAmount;
+            var totalReward = sortedTransactions.Sum(t => t.Fee) + GetMinerReward();
 
             var rewardTransaction = new Transaction("COINBASE", minerAddress, totalReward, new byte[0]);
             sortedTransactions.Add(rewardTransaction);
@@ -132,7 +131,6 @@ namespace BlockChain_1.Services
             }
             return balance;
         }
-
         public void AdjustDifficulty()
         {
             if ((Chain.Count - 1) % AdjustmentInterval != 0 || Chain.Count <= 1)
@@ -152,7 +150,6 @@ namespace BlockChain_1.Services
                 Difficulty = Math.Max(1, Difficulty - 1);
             }
         }
-
         public bool IsValid()
         {
             for (int i = 1; i < Chain.Count; i++)
@@ -189,15 +186,31 @@ namespace BlockChain_1.Services
             }
             return true;
         }
-
+        public int GetInvalidBlockIndex()
+        {
+            for(int i = 1; i < Chain.Count; i++)
+            {
+                var currentBlock = Chain[i];
+                var previousBlock = Chain[i - 1];
+                if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock) ||
+                    currentBlock.PreviousHash != previousBlock.Hash ||
+                    currentBlock.MiningDuration < 0 ||
+                    currentBlock.TimeStamp <= previousBlock.TimeStamp)
+                {
+                    return i;
+                }
+            }
+            return -1; 
+        }
         public Block FindBlockByHash(string targetHash)
         {
             return Chain.FirstOrDefault(b => b.Hash.Equals(targetHash, StringComparison.OrdinalIgnoreCase));
         }
-
-        public void RecalculateHashForBlock(Block block)
+        private decimal GetMinerReward()
         {
-            block.Hash = _hashingService.ComputeHash(block);
+            int halvings = Chain.Count / _halvingInterval;
+            decimal reward = _rewardAmount / (decimal)Math.Pow(2, halvings);
+            return reward > 0 ? reward : 0;
         }
     }
 }
