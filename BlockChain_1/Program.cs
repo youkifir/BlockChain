@@ -43,6 +43,7 @@ namespace BlockChain_1
             Console.WriteLine("7. Exit");
             Console.WriteLine("8. Change Blockchain");
             Console.WriteLine("9. Test: знайти індекс підробленого блоку");
+            Console.WriteLine("10. Test: Vanity Mining (пошук HEX-слова у хеші)");
 
             //Wallets
             var walletAlice = walletService.CreateWallet("Alice");
@@ -110,6 +111,10 @@ namespace BlockChain_1
                         await TestGetInvalidBlockIndex(blockChain1, transactionService, walletAlice, walletBob);
                         break;
 
+                    case "10":
+                        await TestVanityMining(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+
                     default:
                         Console.WriteLine("Choose correct option");
                         break;
@@ -170,6 +175,43 @@ namespace BlockChain_1
             {
                 Console.WriteLine($"Увага! Знайдено порушення цілісності. Підроблений блок під номером: {invalidIndex}.");
             }
+        }
+
+        static async Task TestVanityMining(
+            BlockChainService blockChain,
+            TransactionService transactionService,
+            Wallet walletAlice,
+            Wallet walletBob)
+        {
+            Console.WriteLine("\n=== Тест: Vanity Mining ===");
+
+            blockChain.VanityPrefix = "cafe";
+            Console.WriteLine($"Vanity-префікс: \"{blockChain.VanityPrefix}\"");
+
+            const int blocksToMine = 4;
+            int startCount = blockChain.Chain.Count;
+
+            while (blockChain.Chain.Count < startCount + blocksToMine)
+            {
+                try
+                {
+                    var tx = transactionService.CreateTransaction(walletAlice, walletBob.Address, 1m);
+                    blockChain.AddTransactionToMemPool(tx);
+                }
+                catch
+                {
+                }
+
+                await blockChain.MineBlock(walletAlice.Address);
+
+                var minedBlock = blockChain.Chain[blockChain.Chain.Count - 1];
+                Console.WriteLine($"Блок №{minedBlock.Index} замайнено. Hash: {minedBlock.Hash} | Nonce: {minedBlock.Nonce} | Час: {minedBlock.MiningDuration:F3} с");
+            }
+
+            bool isValid = blockChain.IsValid();
+            Console.WriteLine(isValid
+                ? "Ланцюг валідний: всі блоки містять vanity-префікс і зв'язки коректні."
+                : "Ланцюг НЕВАЛІДНИЙ.");
         }
     }
 }

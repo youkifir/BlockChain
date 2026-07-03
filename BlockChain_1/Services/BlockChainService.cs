@@ -25,6 +25,8 @@ namespace BlockChain_1.Services
         private int maxTransactionsAmount { get; set; } = 10;
         private int _halvingInterval { get; set; } = 2;
 
+        public string VanityPrefix { get; set; } = "cafe";
+
 
         public BlockChainService(int initialDifficulty = 6)
         {
@@ -82,7 +84,7 @@ namespace BlockChain_1.Services
                 sortedTransactions,
                 lastBlock.Hash);
 
-            await _miningService.MineBlockAsync(newBlock, Difficulty);
+            await _miningService.MineBlockAsync(newBlock, VanityPrefix);
 
             Chain.Add(newBlock);
 
@@ -158,14 +160,14 @@ namespace BlockChain_1.Services
                 var previousBlock = Chain[i - 1];
                 foreach (var tx in currentBlock.Transactions)
                 {
-                    if(tx.From == "COINBASE")
+                    if (tx.From == "COINBASE")
                     {
                         continue;
                     }
-                    
+
                     bool isSignatureValid = _walletService.VerifySignature(tx.From, tx.GetDataToSign(), tx.Signature);
 
-                    if(!isSignatureValid)
+                    if (!isSignatureValid)
                     {
                         Console.WriteLine($"[CRITICAL ERROR] Invalid signature in block {Chain[i]} | transaction: {tx.Id}");
                         return false;
@@ -175,6 +177,12 @@ namespace BlockChain_1.Services
 
                 if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock)) return false;
                 if (currentBlock.PreviousHash != previousBlock.Hash) return false;
+
+                if (!currentBlock.Hash.StartsWith(VanityPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"[CRITICAL ERROR] Block {currentBlock.Index} hash \"{currentBlock.Hash}\" does not start with vanity prefix \"{VanityPrefix}\"");
+                    return false;
+                }
 
                 if (currentBlock.MiningDuration < 0) return false;
                 if (currentBlock.TimeStamp <= previousBlock.TimeStamp) return false;
@@ -188,19 +196,20 @@ namespace BlockChain_1.Services
         }
         public int GetInvalidBlockIndex()
         {
-            for(int i = 1; i < Chain.Count; i++)
+            for (int i = 1; i < Chain.Count; i++)
             {
                 var currentBlock = Chain[i];
                 var previousBlock = Chain[i - 1];
                 if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock) ||
                     currentBlock.PreviousHash != previousBlock.Hash ||
+                    !currentBlock.Hash.StartsWith(VanityPrefix, StringComparison.OrdinalIgnoreCase) ||
                     currentBlock.MiningDuration < 0 ||
                     currentBlock.TimeStamp <= previousBlock.TimeStamp)
                 {
                     return i;
                 }
             }
-            return -1; 
+            return -1;
         }
         public Block FindBlockByHash(string targetHash)
         {
