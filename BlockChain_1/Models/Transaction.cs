@@ -35,5 +35,10 @@ namespace BlockChain_1.Models
             string raw = $"{Id}{From}{To}{Amount}{TimeStamp:O}";
             return Encoding.UTF8.GetBytes(raw);
         }
+        public int GetSizeInBytes()
+        {
+            string payload = $"{Id}|{From}->{To}|{Amount}|{TimeStamp:O}|{Fee}";
+            return Encoding.UTF8.GetByteCount(payload);
+        }
     }
 }

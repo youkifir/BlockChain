@@ -44,12 +44,20 @@ namespace BlockChain_1
             Console.WriteLine("8. Change Blockchain");
             Console.WriteLine("9. Test: знайти індекс підробленого блоку");
             Console.WriteLine("10. Test: Vanity Mining (пошук HEX-слова у хеші)");
+            Console.WriteLine("11. Test: Смарт-пакування 15 транзакцій у блоки");
 
             //Wallets
             var walletAlice = walletService.CreateWallet("Alice");
             var walletBob = walletService.CreateWallet("Bob");
             var walletCharlie = walletService.CreateWallet("Charlie");
             var walletDave = walletService.CreateWallet("Dave");
+
+            // Тепер це не імена, а фейкові крипто-адреси у стилі Ethereum,
+            // детерміновано виведені з публічного ключа гаманця (WalletService.DeriveAddress).
+            Console.WriteLine($"Alice address:   {walletAlice.Address}");
+            Console.WriteLine($"Bob address:     {walletBob.Address}");
+            Console.WriteLine($"Charlie address: {walletCharlie.Address}");
+            Console.WriteLine($"Dave address:    {walletDave.Address}");
 
             while (true)
             {
@@ -113,6 +121,10 @@ namespace BlockChain_1
 
                     case "10":
                         await TestVanityMining(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+
+                    case "11":
+                        await TestSmartChunking(blockChain1, transactionService, walletAlice, walletBob);
                         break;
 
                     default:
@@ -212,6 +224,67 @@ namespace BlockChain_1
             Console.WriteLine(isValid
                 ? "Ланцюг валідний: всі блоки містять vanity-префікс і зв'язки коректні."
                 : "Ланцюг НЕВАЛІДНИЙ.");
+        }
+
+        /// <summary>
+        /// Демонстрація Частини 1 і 2:
+        /// 1) майнить кілька блоків, щоб Аліса мала баланс;
+        /// 2) генерує 15 коректних (0x-адреси) транзакцій Аліса -> Боб;
+        /// 3) віддає їх у ProcessTransactions - метод сам розбиває на блоки за вагою;
+        /// 4) намагається створити транзакцію на невалідну адресу "Bob" (не 0x-формат)
+        ///    і показує, що валідатор її відхиляє.
+        /// </summary>
+        static async Task TestSmartChunking(
+            BlockChainService blockChain,
+            TransactionService transactionService,
+            Wallet walletAlice,
+            Wallet walletBob)
+        {
+            Console.WriteLine("\n=== Тест: Смарт-пакування блоків ===");
+            Console.WriteLine($"MaxBlockSizeBytes = {blockChain.MaxBlockSizeBytes} байт");
+
+            // Даємо Алісі баланс для 15 транзакцій.
+            while (blockChain.GetBalance(walletAlice.Address) < 5m)
+            {
+                await blockChain.MineBlock(walletAlice.Address);
+                Console.WriteLine($"Намайнено блок для поповнення балансу Аліси. Баланс: {blockChain.GetBalance(walletAlice.Address)}");
+            }
+
+            // 1. Генеруємо 15 коректних транзакцій (валідні 0x-адреси, підпис, все як слід).
+            var transactions = new List<Transaction>();
+            for (int i = 0; i < 15; i++)
+            {
+                try
+                {
+                    var tx = transactionService.CreateTransaction(walletAlice, walletBob.Address, 0.1m);
+                    transactions.Add(tx);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Не вдалось створити транзакцію #{i}: {ex.Message}");
+                }
+            }
+
+            Console.WriteLine($"Згенеровано {transactions.Count} валідних транзакцій. Кожна важить ~{(transactions.Count > 0 ? transactions[0].GetSizeInBytes() : 0)} байт.");
+            Console.WriteLine("Передаємо на автоматичне пакування (ProcessTransactions)...\n");
+
+            // 2. Автоматичне пакування і майнінг кількох блоків підряд.
+            blockChain.ProcessTransactions(transactions, walletAlice.Address);
+
+            Console.WriteLine($"\nВсього блоків у ланцюгу зараз: {blockChain.Chain.Count}");
+            Console.WriteLine(blockChain.IsValid() ? "Ланцюг валідний." : "Ланцюг НЕВАЛІДНИЙ.");
+
+            // 3. Демонстрація відхилення транзакції на невалідну адресу "Bob".
+            Console.WriteLine("\n--- Спроба створити транзакцію на невалідну адресу \"Bob\" ---");
+            try
+            {
+                transactionService.CreateTransaction(walletAlice, "Bob", 1m);
+                Console.WriteLine("ПОМИЛКА: транзакція НЕ мала пройти валідацію, але пройшла!");
+            }
+            catch (ArgumentException ex)
+            {
+                Console.WriteLine($"Транзакцію відхилено, як і очікувалось: {ex.Message}");
+            }
         }
     }
 }

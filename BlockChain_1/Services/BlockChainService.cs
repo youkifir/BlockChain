@@ -27,6 +27,16 @@ namespace BlockChain_1.Services
 
         public string VanityPrefix { get; set; } = "cafe";
 
+        // === Смарт-пакування блоків (Smart Chunking) ===
+        // Максимальна "вага" одного блоку в байтах (сума Transaction.GetSizeInBytes()
+        // усіх транзакцій, що в нього увійшли). Реальні адреси в стилі Ethereum (42
+        // символи кожна) + GUID + ISO-таймстемп важать разом ~150-160 байт на
+        // транзакцію, тож із лімітом 256 в один блок типово влізає 1 транзакція -
+        // це очікувано і показує, що алгоритм справді рахує реальну вагу, а не
+        // просто ділить список на шматки по N штук. Збільшіть значення, якщо
+        // хочете бачити по кілька транзакцій в одному блоці.
+        public int MaxBlockSizeBytes { get; } = 256;
+
 
         public BlockChainService(int initialDifficulty = 6)
         {
@@ -114,6 +124,119 @@ namespace BlockChain_1.Services
             }
             _pendingTransactions.Add(transaction);
         }
+
+        /// <summary>
+        /// Автоматично розбиває вхідний список транзакцій на кілька блоків,
+        /// спираючись на реальну вагу кожної транзакції в байтах
+        /// (Transaction.GetSizeInBytes(), Encoding.UTF8.GetByteCount під капотом).
+        ///
+        /// Як тільки додавання чергової транзакції переповнило б поточний блок
+        /// (currentBatchSize + txSize > MaxBlockSizeBytes) - поточний пакет одразу
+        /// майниться і додається в ланцюг, а нова транзакція йде вже в наступний
+        /// пакет. Жодна валідна транзакція не губиться: цикл завжди доходить до
+        /// кінця списку, а залишок після циклу майниться окремим "хвостовим" блоком.
+        ///
+        /// Транзакція, яка сама по собі важча за MaxBlockSizeBytes, ніколи б не
+        /// влізла в жоден блок - вона відхиляється з попередженням в консоль,
+        /// а обробка решти списку продовжується.
+        /// </summary>
+        public void ProcessTransactions(List<Transaction> incomingTransactions, string minerAddress = null)
+        {
+            if (incomingTransactions == null || incomingTransactions.Count == 0)
+            {
+                Console.WriteLine("[ProcessTransactions] Немає транзакцій для обробки.");
+                return;
+            }
+
+            var currentBatch = new List<Transaction>();
+            int currentBatchSize = 0;
+            int minedBlocksCount = 0;
+            int rejectedCount = 0;
+
+            foreach (var tx in incomingTransactions)
+            {
+                var validation = _transactionService.ValidateTransaction(tx);
+                if (!validation.IsValid)
+                {
+                    rejectedCount++;
+                    Console.WriteLine($"[ProcessTransactions] Транзакцію {tx?.Id} відхилено: {validation.ErrorMessage}");
+                    continue;
+                }
+
+                int txSize = tx.GetSizeInBytes();
+
+                if (txSize > MaxBlockSizeBytes)
+                {
+                    rejectedCount++;
+                    Console.WriteLine($"[ProcessTransactions] Транзакція {tx.Id} важить {txSize} байт - більше за ліміт блоку ({MaxBlockSizeBytes} байт). Відхилено.");
+                    continue;
+                }
+
+                // Додавання цієї транзакції переповнить поточний блок -
+                // спочатку майнимо накопичене, тоді починаємо новий пакет.
+                if (currentBatch.Count > 0 && currentBatchSize + txSize > MaxBlockSizeBytes)
+                {
+                    minedBlocksCount++;
+                    Console.WriteLine($"[ProcessTransactions] Блок №{minedBlocksCount}: {currentBatch.Count} транз., {currentBatchSize} байт. Майнимо...");
+                    MineTransactionBatch(currentBatch, minerAddress);
+
+                    currentBatch = new List<Transaction>();
+                    currentBatchSize = 0;
+                }
+
+                currentBatch.Add(tx);
+                currentBatchSize += txSize;
+            }
+
+            // "Хвостовий" блок з тим, що лишилось після циклу.
+            if (currentBatch.Count > 0)
+            {
+                minedBlocksCount++;
+                Console.WriteLine($"[ProcessTransactions] Блок №{minedBlocksCount}: {currentBatch.Count} транз., {currentBatchSize} байт. Майнимо...");
+                MineTransactionBatch(currentBatch, minerAddress);
+            }
+
+            Console.WriteLine($"[ProcessTransactions] Готово. Замайнено блоків: {minedBlocksCount}. Відхилено транзакцій: {rejectedCount}.");
+        }
+
+        /// <summary>
+        /// Майнить конкретний, уже сформований пакет транзакцій окремим блоком,
+        /// в обхід звичайного мемпулу (_pendingTransactions) та ліміту
+        /// maxTransactionsAmount, щоб гарантовано не загубити жодну транзакцію з пакета.
+        ///
+        /// MineBlockAsync асинхронний (паралелить пошук nonce по потоках), а
+        /// ProcessTransactions навмисно синхронний за сигнатурою завдання - тому
+        /// тут використано GetAwaiter().GetResult(). У консольному застосунку без
+        /// SynchronizationContext це не створює дедлоку.
+        /// </summary>
+        private void MineTransactionBatch(List<Transaction> batch, string minerAddress)
+        {
+            var transactionsToMine = new List<Transaction>(batch);
+
+            if (!string.IsNullOrEmpty(minerAddress))
+            {
+                var rewardTransaction = new Transaction("COINBASE", minerAddress, GetMinerReward(), new byte[0]);
+                transactionsToMine.Add(rewardTransaction);
+            }
+
+            Block lastBlock = Chain.Last();
+            Block newBlock = new Block(
+                lastBlock.Index + 1,
+                DateTime.UtcNow,
+                transactionsToMine,
+                lastBlock.Hash);
+
+            _miningService.MineBlockAsync(newBlock, VanityPrefix).GetAwaiter().GetResult();
+
+            Chain.Add(newBlock);
+            _fileStorageService.SaveBlockchain(Chain);
+
+            if (newBlock.Index % AdjustmentInterval == 0)
+            {
+                AdjustDifficulty();
+            }
+        }
+
         public decimal GetBalance(string address)
         {
             decimal balance = 0;
@@ -165,11 +288,31 @@ namespace BlockChain_1.Services
                         continue;
                     }
 
-                    bool isSignatureValid = _walletService.VerifySignature(tx.From, tx.GetDataToSign(), tx.Signature);
+                    // Адреса відправника повинна відповідати публічному ключу,
+                    // який транзакція несе в собі (SenderPublicKey), і саме
+                    // цим ключем (а не адресою напряму) перевіряється підпис.
+                    string derivedAddress;
+                    try
+                    {
+                        derivedAddress = WalletService.DeriveAddress(tx.SenderPublicKey);
+                    }
+                    catch (ArgumentException)
+                    {
+                        Console.WriteLine($"[CRITICAL ERROR] Missing/invalid sender public key in block {currentBlock.Index} | transaction: {tx.Id}");
+                        return false;
+                    }
+
+                    if (!string.Equals(derivedAddress, tx.From, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"[CRITICAL ERROR] Sender address does not match public key in block {currentBlock.Index} | transaction: {tx.Id}");
+                        return false;
+                    }
+
+                    bool isSignatureValid = _walletService.VerifySignature(tx.SenderPublicKey, tx.GetDataToSign(), tx.Signature);
 
                     if (!isSignatureValid)
                     {
-                        Console.WriteLine($"[CRITICAL ERROR] Invalid signature in block {Chain[i]} | transaction: {tx.Id}");
+                        Console.WriteLine($"[CRITICAL ERROR] Invalid signature in block {currentBlock.Index} | transaction: {tx.Id}");
                         return false;
                     }
                 }
