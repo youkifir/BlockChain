@@ -12,6 +12,7 @@ namespace BlockChain_1.Models
         public int Nonce { get; set; }
         public double MiningDuration { get; set; }
         public string Hash { get; set; }
+        public int Difficulty { get; set; } = 3;
 
         public Block(int index, DateTime timeStamp, List<Transaction> transactions, string previousHash)
         {

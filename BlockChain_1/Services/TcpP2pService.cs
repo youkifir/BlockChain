@@ -20,14 +20,12 @@ namespace BlockChain_1.Services
             _blockChainService = blockChainService;
             _listener = new TcpListener(System.Net.IPAddress.Any, port);
         }
-
         public void Start()
         {
             _listener.Start();
             Console.WriteLine($"P2P server started on port {((System.Net.IPEndPoint)_listener.LocalEndpoint).Port}");
             Task.Run(() => AcceptClientsAsync());
         }
-
         private async Task AcceptClientsAsync()
         {
             while (true)
@@ -38,7 +36,6 @@ namespace BlockChain_1.Services
                 Task.Run(() => HandleClientAsync(client));
             }
         }
-
         private async Task HandleClientAsync(TcpClient client)
         {
 
@@ -68,7 +65,6 @@ namespace BlockChain_1.Services
                 }
             }
         }
-
         private void ProcessMessage(string messageJson)
         {
             var message = JsonSerializer.Deserialize<P2pMessage>(messageJson);
@@ -94,10 +90,15 @@ namespace BlockChain_1.Services
                 case MessageType.SyncChain:
                     var receivedChain = JsonSerializer.Deserialize<List<Block>>(message.Data);
                     if (receivedChain == null) return;
-                    if (receivedChain.Count > _blockChainService.Chain.Count)
+                    var consensusChain = _blockChainService.ResolveConflicts(receivedChain);
+                    if (consensusChain)
                     {
                         _blockChainService.Chain = receivedChain;
-                        Console.WriteLine($"Blockchain synchronized with received chain. New length: {_blockChainService.Chain.Count}");
+                        Console.WriteLine($"Blockchain synchronized with received chain. New length: {receivedChain.Count}");
+                    }
+                    else
+                    {
+                        BroadcastSync(); // Request the correct chain from peers
                     }
                     break;
                 default:
@@ -106,7 +107,11 @@ namespace BlockChain_1.Services
             }
 
         }
-
+        private void BroadcastSync()
+        {
+            var message = new P2pMessage(MessageType.SyncChain, JsonSerializer.Serialize(_blockChainService.Chain));
+            BroadcastMessage(message);
+        }
         private void BroadcastMessage(P2pMessage message)
         {
             var messageJson = JsonSerializer.Serialize(message);
@@ -144,6 +149,7 @@ namespace BlockChain_1.Services
                 await client.ConnectAsync(ipAddress, port);
                 _clients.Add(client);
                 Console.WriteLine($"Connected to peer: {ipAddress}:{port}");
+                BroadcastSync(); // Send the current blockchain to the newly connected peer
                 await Task.Run(() => HandleClientAsync(client));
             }
             catch (Exception ex)

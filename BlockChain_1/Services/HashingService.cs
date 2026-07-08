@@ -6,15 +6,9 @@ namespace BlockChain_1.Services
 {
     public class HashingService
     {
-        public string ComputeHash(Block block)
+        public string ComputeHash(Block block, string merkleRoot)
         {
-            var transactionHashes = new StringBuilder();
-            foreach (var tx in block.Transactions)
-            {
-                transactionHashes.Append(HashString(tx.ToHashString()));
-            }
-
-            var blockData = $"{block.Index}{block.TimeStamp:O}{transactionHashes}{block.PreviousHash}{block.Nonce}";
+            var blockData = $"{block.Index}{block.TimeStamp.ToString("O")}{merkleRoot}{block.PreviousHash}{block.Nonce}";
             return HashString(blockData);
         }
 
@@ -24,5 +18,121 @@ namespace BlockChain_1.Services
             byte[] hashBytes = SHA256.HashData(inputBytes);
             return Convert.ToHexString(hashBytes);
         }
+
+        public string GetMerkleTree(List<Transaction> transactions)
+        {
+            if (transactions == null || transactions.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            var currentLayer = new List<string>();
+            foreach (var tx in transactions)
+            {
+                currentLayer.Add(HashString(tx.ToHashString()));
+            }
+
+            int level = 0;
+            Console.WriteLine($"Level {level} (Листя): {currentLayer.Count} хешів");
+
+            while (currentLayer.Count > 1)
+            {
+                level++;
+                var nextLayer = new List<string>();
+
+                for (int i = 0; i < currentLayer.Count; i += 2)
+                {
+                    string left = currentLayer[i];
+                    string right = (i + 1 < currentLayer.Count) ? currentLayer[i + 1] : left;
+                    nextLayer.Add(HashString(left + right));
+                }
+
+                currentLayer = nextLayer;
+
+                if (currentLayer.Count == 1)
+                {
+                    Console.WriteLine($"Level {level} (Корінь): {currentLayer.Count} хеш");
+                }
+                else
+                {
+                    Console.WriteLine($"Level {level} (Гілки): {currentLayer.Count} хеші");
+                }
+            }
+
+            return currentLayer[0];
+        }
+        public List<(string Hash, bool IsLeft)> GetMerkleProof(List<Transaction> transactions, string targetTransactionId)
+        {
+            if (transactions == null || transactions.Count == 0 || string.IsNullOrEmpty(targetTransactionId))
+            {
+                return new List<(string Hash, bool IsLeft)>();
+            }
+
+            // 1. Знаходимо індекс цільової транзакції
+            int targetIndex = transactions.FindIndex(t => t.Id == targetTransactionId);
+            if (targetIndex == -1)
+            {
+                return new List<(string Hash, bool IsLeft)>(); // Транзакцію не знайдено
+            }
+
+            // 2. Будуємо всі рівні дерева
+            List<List<string>> treeLevels = new List<List<string>>();
+
+            // Початковий рівень — це хеші самих транзакцій
+            List<string> currentLevel = transactions.Select(t => t.GetHashCode().ToString()).ToList();
+            treeLevels.Add(currentLevel);
+
+            // Будуємо дерево вгору, поки не залишиться один корінь
+            while (currentLevel.Count > 1)
+            {
+                List<string> nextLevel = new List<string>();
+                for (int i = 0; i < currentLevel.Count; i += 2)
+                {
+                    string left = currentLevel[i];
+                    // Якщо пари немає (непарна кількість), дублюємо лівий елемент
+                    string right = (i + 1 < currentLevel.Count) ? currentLevel[i + 1] : left;
+
+                    nextLevel.Add(HashString(left + right));
+                }
+                currentLevel = nextLevel;
+                treeLevels.Add(currentLevel);
+            }
+
+            // 3. Збираємо доказ (Proof), піднімаючись по рівнях вгору
+            List<(string Hash, bool IsLeft)> proof = new List<(string Hash, bool IsLeft)>();
+            int currentIndex = targetIndex;
+
+            // Проходимо по всіх рівнях, крім останнього (де корінь)
+            for (int i = 0; i < treeLevels.Count - 1; i++)
+            {
+                List<string> level = treeLevels[i];
+                bool isTargetLeft = (currentIndex % 2 == 0);
+
+                int neighborIndex;
+                bool isNeighborLeft;
+
+                if (isTargetLeft)
+                {
+                    // Якщо поточний елемент лівий, то сусід — правий
+                    // Якщо це останній елемент і пари немає, він дублює сам себе
+                    neighborIndex = (currentIndex + 1 < level.Count) ? currentIndex + 1 : currentIndex;
+                    isNeighborLeft = false;
+                }
+                else
+                {
+                    // Якщо поточний елемент правий, то сусід — лівий
+                    neighborIndex = currentIndex - 1;
+                    isNeighborLeft = true;
+                }
+
+                proof.Add((level[neighborIndex], isNeighborLeft));
+
+                // Переходимо на рівень вище: індекс батька — це завжди поточний індекс поділений на 2
+                currentIndex /= 2;
+            }
+
+            return proof;
+        }
     }
 }
+

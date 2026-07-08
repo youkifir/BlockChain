@@ -27,14 +27,6 @@ namespace BlockChain_1.Services
 
         public string VanityPrefix { get; set; } = "cafe";
 
-        // === Смарт-пакування блоків (Smart Chunking) ===
-        // Максимальна "вага" одного блоку в байтах (сума Transaction.GetSizeInBytes()
-        // усіх транзакцій, що в нього увійшли). Реальні адреси в стилі Ethereum (42
-        // символи кожна) + GUID + ISO-таймстемп важать разом ~150-160 байт на
-        // транзакцію, тож із лімітом 256 в один блок типово влізає 1 транзакція -
-        // це очікувано і показує, що алгоритм справді рахує реальну вагу, а не
-        // просто ділить список на шматки по N штук. Збільшіть значення, якщо
-        // хочете бачити по кілька транзакцій в одному блоці.
         public int MaxBlockSizeBytes { get; } = 256;
 
 
@@ -68,7 +60,8 @@ namespace BlockChain_1.Services
         private void CreateGenesisBlock()
         {
             Block genesisBlock = new Block(0, DateTime.UtcNow, new List<Transaction>(), "0");
-            genesisBlock.Hash = _hashingService.ComputeHash(genesisBlock);
+            string merkleRoot = _hashingService.GetMerkleTree(genesisBlock.Transactions);
+            genesisBlock.Hash = _hashingService.ComputeHash(genesisBlock, merkleRoot);
             Chain.Add(genesisBlock);
         }
         public async Task MineBlock(string minerAddress)
@@ -125,21 +118,6 @@ namespace BlockChain_1.Services
             _pendingTransactions.Add(transaction);
         }
 
-        /// <summary>
-        /// Автоматично розбиває вхідний список транзакцій на кілька блоків,
-        /// спираючись на реальну вагу кожної транзакції в байтах
-        /// (Transaction.GetSizeInBytes(), Encoding.UTF8.GetByteCount під капотом).
-        ///
-        /// Як тільки додавання чергової транзакції переповнило б поточний блок
-        /// (currentBatchSize + txSize > MaxBlockSizeBytes) - поточний пакет одразу
-        /// майниться і додається в ланцюг, а нова транзакція йде вже в наступний
-        /// пакет. Жодна валідна транзакція не губиться: цикл завжди доходить до
-        /// кінця списку, а залишок після циклу майниться окремим "хвостовим" блоком.
-        ///
-        /// Транзакція, яка сама по собі важча за MaxBlockSizeBytes, ніколи б не
-        /// влізла в жоден блок - вона відхиляється з попередженням в консоль,
-        /// а обробка решти списку продовжується.
-        /// </summary>
         public void ProcessTransactions(List<Transaction> incomingTransactions, string minerAddress = null)
         {
             if (incomingTransactions == null || incomingTransactions.Count == 0)
@@ -172,8 +150,6 @@ namespace BlockChain_1.Services
                     continue;
                 }
 
-                // Додавання цієї транзакції переповнить поточний блок -
-                // спочатку майнимо накопичене, тоді починаємо новий пакет.
                 if (currentBatch.Count > 0 && currentBatchSize + txSize > MaxBlockSizeBytes)
                 {
                     minedBlocksCount++;
@@ -188,7 +164,6 @@ namespace BlockChain_1.Services
                 currentBatchSize += txSize;
             }
 
-            // "Хвостовий" блок з тим, що лишилось після циклу.
             if (currentBatch.Count > 0)
             {
                 minedBlocksCount++;
@@ -199,16 +174,6 @@ namespace BlockChain_1.Services
             Console.WriteLine($"[ProcessTransactions] Готово. Замайнено блоків: {minedBlocksCount}. Відхилено транзакцій: {rejectedCount}.");
         }
 
-        /// <summary>
-        /// Майнить конкретний, уже сформований пакет транзакцій окремим блоком,
-        /// в обхід звичайного мемпулу (_pendingTransactions) та ліміту
-        /// maxTransactionsAmount, щоб гарантовано не загубити жодну транзакцію з пакета.
-        ///
-        /// MineBlockAsync асинхронний (паралелить пошук nonce по потоках), а
-        /// ProcessTransactions навмисно синхронний за сигнатурою завдання - тому
-        /// тут використано GetAwaiter().GetResult(). У консольному застосунку без
-        /// SynchronizationContext це не створює дедлоку.
-        /// </summary>
         private void MineTransactionBatch(List<Transaction> batch, string minerAddress)
         {
             var transactionsToMine = new List<Transaction>(batch);
@@ -288,9 +253,6 @@ namespace BlockChain_1.Services
                         continue;
                     }
 
-                    // Адреса відправника повинна відповідати публічному ключу,
-                    // який транзакція несе в собі (SenderPublicKey), і саме
-                    // цим ключем (а не адресою напряму) перевіряється підпис.
                     string derivedAddress;
                     try
                     {
@@ -318,7 +280,8 @@ namespace BlockChain_1.Services
                 }
 
 
-                if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock)) return false;
+                string merkleRoot = _hashingService.GetMerkleTree(currentBlock.Transactions);
+                if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock, merkleRoot)) return false;
                 if (currentBlock.PreviousHash != previousBlock.Hash) return false;
 
                 if (!currentBlock.Hash.StartsWith(VanityPrefix, StringComparison.OrdinalIgnoreCase))
@@ -343,7 +306,8 @@ namespace BlockChain_1.Services
             {
                 var currentBlock = Chain[i];
                 var previousBlock = Chain[i - 1];
-                if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock) ||
+                string merkleRoot = _hashingService.GetMerkleTree(currentBlock.Transactions);
+                if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock, merkleRoot) ||
                     currentBlock.PreviousHash != previousBlock.Hash ||
                     !currentBlock.Hash.StartsWith(VanityPrefix, StringComparison.OrdinalIgnoreCase) ||
                     currentBlock.MiningDuration < 0 ||
@@ -361,8 +325,61 @@ namespace BlockChain_1.Services
         private decimal GetMinerReward()
         {
             int halvings = Chain.Count / _halvingInterval;
-            decimal reward = _rewardAmount / (decimal)Math.Pow(2, halvings);
+
+            double rewardDouble = (double)_rewardAmount / Math.Pow(2, halvings);
+
+            if (double.IsNaN(rewardDouble) || double.IsInfinity(rewardDouble) || rewardDouble <= 0)
+            {
+                return 0;
+            }
+
+            decimal reward = (decimal)rewardDouble;
             return reward > 0 ? reward : 0;
+        }
+        public double getChainWeight(List<Block> Chain)
+        {
+            double weight = 0;
+            foreach (var block in Chain)
+            {
+                weight += Math.Pow(2, block.Difficulty);
+            }
+            return weight;
+        }
+        public bool IsChainValid(List<Block> externalChain)
+        {
+            for (int i = 1; i < externalChain.Count; i++)
+            {
+                var currentBlock = externalChain[i];
+                var previousBlock = externalChain[i - 1];
+                string merkleRoot = _hashingService.GetMerkleTree(currentBlock.Transactions);
+                if (currentBlock.Hash != _hashingService.ComputeHash(currentBlock, merkleRoot) ||
+                    currentBlock.PreviousHash != previousBlock.Hash ||
+                    !currentBlock.Hash.StartsWith(VanityPrefix, StringComparison.OrdinalIgnoreCase) ||
+                    currentBlock.MiningDuration < 0 ||
+                    currentBlock.TimeStamp <= previousBlock.TimeStamp)
+                {
+                    return false;
+                }
+            }
+            double currentChainWeight = getChainWeight(Chain);
+            double externalChainWeight = getChainWeight(externalChain);
+            return externalChainWeight > currentChainWeight;
+        }
+        public bool ResolveConflicts(List<Block> externalChain)
+        {
+            if (IsChainValid(externalChain))
+            {
+                var currentTotalWork = getChainWeight(Chain);
+                var externalTotalWork = getChainWeight(externalChain);
+                if(externalTotalWork > currentTotalWork)
+                {
+                    return false;
+                }
+                Chain = externalChain;
+                _fileStorageService.SaveBlockchain(Chain);
+                return true;
+            }
+            return false;
         }
     }
 }

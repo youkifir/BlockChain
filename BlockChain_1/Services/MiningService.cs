@@ -36,10 +36,11 @@ namespace BlockChain_1.Services
             }
 
             int workers = Environment.ProcessorCount;
-
             long foundNonce = -1;
             string foundHash = null;
             int found = 0;
+
+            string merkleRoot = _hashingService.GetMerkleTree(block.Transactions);
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
             var tasks = new List<Task>();
@@ -57,7 +58,7 @@ namespace BlockChain_1.Services
                 {
                     while (!cts.Token.IsCancellationRequested)
                     {
-                        string hash = _hashingService.ComputeHash(localBlock);
+                        string hash = _hashingService.ComputeHash(localBlock, merkleRoot);
 
                         if (hash.StartsWith(target))
                         {

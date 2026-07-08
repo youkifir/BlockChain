@@ -11,26 +11,14 @@ namespace BlockChain_1
     {
         static async Task Main(string[] args)
         {
-            Console.OutputEncoding = Encoding.UTF8;
-            Console.WriteLine("Input port number for P2P service: ");
-            var portInput = Console.ReadLine();
-
             //Services
             var displayService = new BlockChainDisplayService();
             var blockChain1 = new BlockChainService(initialDifficulty: 4);
             var transactionService = new TransactionService(blockChain1.Chain);
             var walletService = new WalletService(blockChain1.Chain);
 
-            var p2pService = new TcpP2pService(blockChain1, int.Parse(portInput));
-            p2pService.Start();
 
-            Console.WriteLine("Input port for connect to other node: ");
-            var peerPort = int.Parse(Console.ReadLine());
-            if (peerPort != 0)
-            {
-                await p2pService.ConnectToPeerAsync("127.0.0.1", peerPort);
-                Console.WriteLine("Connected to peer.");
-            }
+
 
             //Show menu
             Console.WriteLine("--- BlockChain Menu ---");
@@ -46,11 +34,24 @@ namespace BlockChain_1
             Console.WriteLine("10. Test: Vanity Mining (пошук HEX-слова у хеші)");
             Console.WriteLine("11. Test: Смарт-пакування 15 транзакцій у блоки");
 
+
+
+
             //Wallets
             var walletAlice = walletService.CreateWallet("Alice");
             var walletBob = walletService.CreateWallet("Bob");
             var walletCharlie = walletService.CreateWallet("Charlie");
             var walletDave = walletService.CreateWallet("Dave");
+
+
+
+
+            Console.WriteLine("Input port for this node: ");
+            var port = Console.ReadLine();
+
+            var p2pService = new TcpP2pService(blockChain1, int.Parse(port));
+            p2pService.Start();
+
 
             // Тепер це не імена, а фейкові крипто-адреси у стилі Ethereum,
             // детерміновано виведені з публічного ключа гаманця (WalletService.DeriveAddress).
@@ -58,6 +59,9 @@ namespace BlockChain_1
             Console.WriteLine($"Bob address:     {walletBob.Address}");
             Console.WriteLine($"Charlie address: {walletCharlie.Address}");
             Console.WriteLine($"Dave address:    {walletDave.Address}");
+
+
+
 
             while (true)
             {
@@ -126,7 +130,13 @@ namespace BlockChain_1
                     case "11":
                         await TestSmartChunking(blockChain1, transactionService, walletAlice, walletBob);
                         break;
-
+                    case "12":
+                        Console.WriteLine("Input port for connect to another node:");
+                        var peerPort = int.Parse(Console.ReadLine());
+                        if(peerPort != 0)
+                        {
+                            await 
+                        }
                     default:
                         Console.WriteLine("Choose correct option");
                         break;
@@ -136,11 +146,7 @@ namespace BlockChain_1
         }
 
         //Test
-        static async Task TestGetInvalidBlockIndex(
-            BlockChainService blockChain,
-            TransactionService transactionService,
-            Wallet walletAlice,
-            Wallet walletBob)
+        static async Task TestGetInvalidBlockIndex(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
         {
             Console.WriteLine("\n=== Тест: пошук пошкодженого блоку ===");
 
@@ -189,11 +195,7 @@ namespace BlockChain_1
             }
         }
 
-        static async Task TestVanityMining(
-            BlockChainService blockChain,
-            TransactionService transactionService,
-            Wallet walletAlice,
-            Wallet walletBob)
+        static async Task TestVanityMining(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
         {
             Console.WriteLine("\n=== Тест: Vanity Mining ===");
 
@@ -226,28 +228,28 @@ namespace BlockChain_1
                 : "Ланцюг НЕВАЛІДНИЙ.");
         }
 
-        /// <summary>
-        /// Демонстрація Частини 1 і 2:
-        /// 1) майнить кілька блоків, щоб Аліса мала баланс;
-        /// 2) генерує 15 коректних (0x-адреси) транзакцій Аліса -> Боб;
-        /// 3) віддає їх у ProcessTransactions - метод сам розбиває на блоки за вагою;
-        /// 4) намагається створити транзакцію на невалідну адресу "Bob" (не 0x-формат)
-        ///    і показує, що валідатор її відхиляє.
-        /// </summary>
-        static async Task TestSmartChunking(
-            BlockChainService blockChain,
-            TransactionService transactionService,
-            Wallet walletAlice,
-            Wallet walletBob)
+        static async Task TestSmartChunking(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
         {
             Console.WriteLine("\n=== Тест: Смарт-пакування блоків ===");
             Console.WriteLine($"MaxBlockSizeBytes = {blockChain.MaxBlockSizeBytes} байт");
 
             // Даємо Алісі баланс для 15 транзакцій.
-            while (blockChain.GetBalance(walletAlice.Address) < 5m)
+            const int maxFundingAttempts = 20;
+            int fundingAttempts = 0;
+            while (blockChain.GetBalance(walletAlice.Address) < 5m && fundingAttempts < maxFundingAttempts)
             {
                 await blockChain.MineBlock(walletAlice.Address);
+                fundingAttempts++;
                 Console.WriteLine($"Намайнено блок для поповнення балансу Аліси. Баланс: {blockChain.GetBalance(walletAlice.Address)}");
+            }
+
+            if (blockChain.GetBalance(walletAlice.Address) < 5m)
+            {
+                Console.WriteLine(
+                    "Не вдалось поповнити баланс Аліси - винагорода за майнінг уже занулилась " +
+                    "(halving-схема виснажилась, бо ланцюг занадто довгий). " +
+                    "Видаліть blockchain.json/wallets.json поруч з .exe і запустіть заново.");
+                return;
             }
 
             // 1. Генеруємо 15 коректних транзакцій (валідні 0x-адреси, підпис, все як слід).
