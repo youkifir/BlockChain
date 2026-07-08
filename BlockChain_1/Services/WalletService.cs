@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace BlockChain_1.Services
 {
@@ -139,6 +140,52 @@ namespace BlockChain_1.Services
             }
 
             return ticker.Equals("BASE", StringComparison.OrdinalIgnoreCase);
+        }
+        public byte[] SignMessage(Wallet wallet, string message)
+        {
+            if (wallet == null) throw new ArgumentNullException(nameof(wallet));
+            if (message == null) throw new ArgumentNullException(nameof(message));
+
+            byte[] messageBytes = Encoding.UTF8.GetBytes(message);
+
+            return wallet.Sign(messageBytes);
+        }
+
+        public bool VerifyMessage(string claimedAddress, byte[] publicKey, string message, byte[] signature)
+        {
+            if (string.IsNullOrWhiteSpace(claimedAddress) || publicKey == null || message == null || signature == null)
+                return false;
+
+            string derivedAddress = DeriveAddress(publicKey);
+            if (!string.Equals(derivedAddress, claimedAddress, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[Сервер Помилка] Авторизація провалена: наданий публічний ключ не відповідає заявленій адресі!");
+                Console.ResetColor();
+                return false;
+            }
+
+            try
+            {
+                using var ecdsa = ECDsa.Create();
+                ecdsa.ImportSubjectPublicKeyInfo(publicKey, out _);
+
+                byte[] messageBytes = Encoding.UTF8.GetBytes(message);
+                bool isSignatureValid = ecdsa.VerifyData(messageBytes, signature, HashAlgorithmName.SHA256);
+
+                if (!isSignatureValid)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("[Сервер Помилка] Авторизація провалена: невалідний цифровий підпис для цього повідомлення.");
+                    Console.ResetColor();
+                }
+
+                return isSignatureValid;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
     }
