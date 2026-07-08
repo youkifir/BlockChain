@@ -9,24 +9,28 @@ namespace BlockChain_1.Services
 {
     public class BlockChainService
     {
+        //Services
         private readonly HashingService _hashingService;
         private readonly MiningService _miningService;
         private readonly TransactionService _transactionService;
         private WalletService _walletService { get; set; }
         private readonly FileStorageService _fileStorageService;
 
+        //Blockchain properties
         public List<Block> Chain { get; set; }
         private readonly List<Transaction> _pendingTransactions = new List<Transaction>();
 
+        //Configuration properties
         public int Difficulty { get; private set; }
         public double TargetBlockTime { get; set; } = 10;
         public int AdjustmentInterval { get; set; } = 3;
         private decimal _rewardAmount { get; set; } = 50;
         private int maxTransactionsAmount { get; set; } = 10;
         private int _halvingInterval { get; set; } = 2;
+        private const decimal ICO_FEE = 100m;
 
+        //Vanity prefix for block hashes
         public string VanityPrefix { get; set; } = "cafe";
-
         public int MaxBlockSizeBytes { get; } = 256;
 
 
@@ -91,9 +95,27 @@ namespace BlockChain_1.Services
 
             Chain.Add(newBlock);
 
+            foreach (var tx in newBlock.Transactions)
+            {
+                if (tx.Type == TransactionType.ICO)
+                {
+                    Console.WriteLine(
+                        $"ICO created: {tx.TokenTicker} ({tx.TotalSupply})");
+                }
+            }
+
             _fileStorageService.SaveBlockchain(Chain);
 
             _pendingTransactions.RemoveAll(t => sortedTransactions.Contains(t));
+
+            foreach (var tx in sortedTransactions)
+            {
+                if (tx.Type == TransactionType.ICO)
+                {
+                    Console.WriteLine(
+                        $"{tx.TokenTicker} successfully issued.");
+                }
+            }
 
             if (newBlock.Index % AdjustmentInterval == 0)
             {
@@ -103,21 +125,36 @@ namespace BlockChain_1.Services
         public void AddTransactionToMemPool(Transaction transaction)
         {
             var validation = _transactionService.ValidateTransaction(transaction);
+
             if (!validation.IsValid)
-            {
                 throw new ArgumentException(validation.ErrorMessage);
-            }
+
             if (transaction.From != "COINBASE")
             {
-                var senderBalance = _walletService.GetBalance(transaction.From);
-                if (senderBalance < transaction.Amount + transaction.Fee)
+                if (transaction.Type == TransactionType.Transfer)
                 {
-                    throw new InvalidOperationException($"Insufficient balance for transaction: {transaction.Id}");
+                    decimal tokenBalance =
+                        _walletService.GetTokenBalance(transaction.From, transaction.TokenTicker);
+
+                    decimal baseBalance =
+                        _walletService.GetBalance(transaction.From);
+
+                    if (tokenBalance < transaction.Amount)
+                        throw new InvalidOperationException("Not enough token balance.");
+
+                    if (baseBalance < transaction.Fee)
+                        throw new InvalidOperationException("Not enough BASE for fee.");
+                }
+
+                if (transaction.Type == TransactionType.ICO)
+                {
+                    if (_walletService.GetBalance(transaction.From) < ICO_FEE)
+                        throw new InvalidOperationException("Not enough BASE for ICO.");
                 }
             }
+
             _pendingTransactions.Add(transaction);
         }
-
         public void ProcessTransactions(List<Transaction> incomingTransactions, string minerAddress = null)
         {
             if (incomingTransactions == null || incomingTransactions.Count == 0)
@@ -160,6 +197,12 @@ namespace BlockChain_1.Services
                     currentBatchSize = 0;
                 }
 
+                if (tx.Type == TransactionType.ICO)
+                {
+                    Console.WriteLine(
+                        $"ICO transaction: {tx.TokenTicker}");
+                }
+
                 currentBatch.Add(tx);
                 currentBatchSize += txSize;
             }
@@ -173,7 +216,6 @@ namespace BlockChain_1.Services
 
             Console.WriteLine($"[ProcessTransactions] Готово. Замайнено блоків: {minedBlocksCount}. Відхилено транзакцій: {rejectedCount}.");
         }
-
         private void MineTransactionBatch(List<Transaction> batch, string minerAddress)
         {
             var transactionsToMine = new List<Transaction>(batch);
@@ -201,25 +243,9 @@ namespace BlockChain_1.Services
                 AdjustDifficulty();
             }
         }
-
         public decimal GetBalance(string address)
         {
-            decimal balance = 0;
-            foreach (var block in Chain)
-            {
-                foreach (var transaction in block.Transactions)
-                {
-                    if (transaction.From == address)
-                    {
-                        balance -= transaction.Amount + transaction.Fee;
-                    }
-                    if (transaction.To == address)
-                    {
-                        balance += transaction.Amount;
-                    }
-                }
-            }
-            return balance;
+            return _walletService.GetBalance(address);
         }
         public void AdjustDifficulty()
         {
@@ -380,6 +406,36 @@ namespace BlockChain_1.Services
                 return true;
             }
             return false;
+        }
+        public Dictionary<string, decimal> GetPortfolio(string address)
+        {
+            return _walletService.GetPortfolio(address);
+        }
+        public void PrintPortfolio(string address)
+        {
+            var portfolio = GetPortfolio(address);
+
+            Console.WriteLine(address);
+
+            foreach (var token in portfolio)
+            {
+                Console.WriteLine($"{token.Key} : {token.Value}");
+            }
+        }
+        public async Task ProcessBlockMiningAsync(Block block)
+        {
+            string merkleRoot = _hashingService.GetMerkleTree(block.Transactions);
+
+            block.Difficulty = this.Difficulty;
+
+            Console.WriteLine($"[Майнінг] Початок підбору Nonce для блоку #{block.Index} з префіксом '{this.VanityPrefix}'...");
+
+            bool success = await _miningService.MineBlockAsync(block, this.VanityPrefix);
+
+            if (!success)
+            {
+                throw new InvalidOperationException($"Не вдалося замайнити блок #{block.Index}");
+            }
         }
     }
 }

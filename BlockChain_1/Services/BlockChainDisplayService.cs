@@ -23,21 +23,39 @@ namespace BlockChain_1.Services
                 Console.WriteLine(new string('-', 50));
             }
         }
-
         public void PrintTransaction(Transaction tx)
         {
-            Console.WriteLine($"  Id:        {tx.Id}");
-            Console.WriteLine($"  From:      {tx.From}");
-            Console.WriteLine($"  To:        {tx.To}");
-            Console.WriteLine($"  Amount:    {tx.Amount}");
-            Console.WriteLine($"  Fee:       {tx.Fee}");
-            Console.WriteLine($"  TimeStamp: {tx.TimeStamp}");
-            Console.WriteLine(new string('-', 50));
-        }
+            Console.WriteLine($"Id:           {tx.Id}");
+            Console.WriteLine($"Type:         {tx.Type}");
+            Console.WriteLine($"From:         {tx.From}");
+            Console.WriteLine($"To:           {tx.To}");
+            Console.WriteLine($"Currency:     {tx.TokenTicker}");
+            Console.WriteLine($"Amount:       {tx.Amount}");
 
+            if (tx.Type == TransactionType.ICO)
+            {
+                Console.WriteLine($"Emission:     {tx.TotalSupply}");
+            }
+
+            Console.WriteLine($"Fee:          {tx.Fee}");
+            Console.WriteLine($"Time:         {tx.TimeStamp}");
+            Console.WriteLine("---------------------------------------");
+        }
         public void PrintChainValidity(bool isValid)
         {
             Console.WriteLine(isValid ? "Blockchain is valid." : "Blockchain is INVALID.");
+        }
+        public void PrintPortfolio(string name, Dictionary<string, decimal> portfolio)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"========== {name} ==========");
+
+            foreach (var token in portfolio)
+            {
+                Console.WriteLine($"{token.Key,-20}{token.Value}");
+            }
+
+            Console.WriteLine();
         }
     }
 }

@@ -11,137 +11,250 @@ namespace BlockChain_1
     {
         static async Task Main(string[] args)
         {
-            //Services
-            var displayService = new BlockChainDisplayService();
-            var blockChain1 = new BlockChainService(initialDifficulty: 4);
-            var transactionService = new TransactionService(blockChain1.Chain);
-            var walletService = new WalletService(blockChain1.Chain);
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.WriteLine("=== ЕКЗАМЕНАЦІЙНА РОБОТА: Епоха Смарт-Контрактів ===");
 
+            var blockChain = new BlockChainService(initialDifficulty: 3);
+            var transactionService = new TransactionService(blockChain.Chain);
+            var walletService = new WalletService(blockChain.Chain);
 
-
-
-            //Show menu
-            Console.WriteLine("--- BlockChain Menu ---");
-            Console.WriteLine("1. Mine Block");
-            Console.WriteLine("2. Create Transaction");
-            Console.WriteLine("3. Show Alice Balance");
-            Console.WriteLine("4. Show Bob Balance");
-            Console.WriteLine("5. Validate Blockchain");
-            Console.WriteLine("6. Print Blockchain");
-            Console.WriteLine("7. Exit");
-            Console.WriteLine("8. Change Blockchain");
-            Console.WriteLine("9. Test: знайти індекс підробленого блоку");
-            Console.WriteLine("10. Test: Vanity Mining (пошук HEX-слова у хеші)");
-            Console.WriteLine("11. Test: Смарт-пакування 15 транзакцій у блоки");
-
-
-
-
-            //Wallets
             var walletAlice = walletService.CreateWallet("Alice");
             var walletBob = walletService.CreateWallet("Bob");
-            var walletCharlie = walletService.CreateWallet("Charlie");
-            var walletDave = walletService.CreateWallet("Dave");
 
+            Console.WriteLine($"Адреса Аліси: {walletAlice.Address}");
+            Console.WriteLine($"Адреса Боба: {walletBob.Address}\n");
 
+            Console.WriteLine("--- Крок 1: Аліса майнить блоки для капіталу BASE ---");
 
-
-            Console.WriteLine("Input port for this node: ");
-            var port = Console.ReadLine();
-
-            var p2pService = new TcpP2pService(blockChain1, int.Parse(port));
-            p2pService.Start();
-
-
-            // Тепер це не імена, а фейкові крипто-адреси у стилі Ethereum,
-            // детерміновано виведені з публічного ключа гаманця (WalletService.DeriveAddress).
-            Console.WriteLine($"Alice address:   {walletAlice.Address}");
-            Console.WriteLine($"Bob address:     {walletBob.Address}");
-            Console.WriteLine($"Charlie address: {walletCharlie.Address}");
-            Console.WriteLine($"Dave address:    {walletDave.Address}");
-
-
-
-
-            while (true)
+            for (int i = 1; i <= 3; i++)
             {
-                Console.Write("\nChoose an option: ");
-                var choice = Console.ReadLine();
-
-                switch (choice)
+                var coinbaseTx = new Transaction("System", walletAlice.Address, 50m, walletAlice.PublicKey)
                 {
-                    case "1":
-                        await blockChain1.MineBlock(walletAlice.Address); // Mine block with Alice's address as the miner
-                        Console.WriteLine("Block mined successfully.");
-                        break;
+                    Type = TransactionType.Transfer,
+                    TokenTicker = "BASE",
+                    Fee = 0
+                };
 
-                    case "2":
-                        try
-                        {
-                            var transaction1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 10m); // Create transaction from Alice to Bob
-                            blockChain1.AddTransactionToMemPool(transaction1);
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error: {ex.Message}");
-                        }
-                        break;
+                var txs = new List<Transaction> { coinbaseTx };
+                var lastBlock = blockChain.Chain[blockChain.Chain.Count - 1];
+                var newBlock = new Block(blockChain.Chain.Count, DateTime.UtcNow, txs, lastBlock.Hash);
 
-                    case "3":
-                        Console.WriteLine($"Alice's balance: {walletService.GetBalance(walletAlice.Address)}"); // ALice balance
-                        break;
-
-                    case "4":
-                        Console.WriteLine($"Bob's balance: {walletService.GetBalance(walletBob.Address)}"); // Bob balance
-                        break;
-
-                    case "5":
-                        bool isValid = blockChain1.IsValid();
-                        displayService.PrintChainValidity(isValid);
-                        break;
-
-                    case "6":
-                        displayService.PrintChain(blockChain1.Chain); // Print blockchain
-                        break;
-
-                    case "7":
-                        return; // Exit
-
-                    case "8":
-                        if (blockChain1.Chain.Count > 1 && blockChain1.Chain[1].Transactions.Count > 0)
-                        {
-                            blockChain1.Chain[1].Transactions[0].Amount = 100;
-                            Console.WriteLine("Blockchain modified. Please validate again.");
-                        }
-                        else
-                        {
-                            Console.WriteLine("Use option 2 to add a transaction first.");
-                        }
-                        break;
-
-                    case "9":
-                        await TestGetInvalidBlockIndex(blockChain1, transactionService, walletAlice, walletBob);
-                        break;
-
-                    case "10":
-                        await TestVanityMining(blockChain1, transactionService, walletAlice, walletBob);
-                        break;
-
-                    case "11":
-                        await TestSmartChunking(blockChain1, transactionService, walletAlice, walletBob);
-                        break;
-                    case "12":
-                        Console.WriteLine("Input port for connect to another node:");
-                        var peerPort = int.Parse(Console.ReadLine());
-                        if(peerPort != 0)
-                        {
-                            await 
-                        }
-                    default:
-                        Console.WriteLine("Choose correct option");
-                        break;
-                }
+                Console.WriteLine($"Майнінг блоку {i} Алісою...");
+                await blockChain.ProcessBlockMiningAsync(newBlock);
+                blockChain.Chain.Add(newBlock);
             }
+
+            Console.WriteLine("\n[Стан портфелів після майнінгу]:");
+            blockChain.PrintPortfolio(walletAlice.Address);
+            blockChain.PrintPortfolio(walletBob.Address);
+
+            Console.WriteLine("\n--- Крок 2: Аліса випускає 1000 токенів ALICE_COIN ---");
+            try
+            {
+                var aliceIcoTx = transactionService.CreateToken(walletAlice, "ALICE_COIN", 1000m);
+
+                var coinbaseTx = new Transaction("System", walletAlice.Address, 50m, walletAlice.PublicKey);
+                var txs = new List<Transaction> { coinbaseTx, aliceIcoTx };
+                var lastBlock = blockChain.Chain[blockChain.Chain.Count - 1];
+                var newBlock = new Block(blockChain.Chain.Count, DateTime.UtcNow, txs, lastBlock.Hash);
+
+                await blockChain.ProcessBlockMiningAsync(newBlock);
+                blockChain.Chain.Add(newBlock);
+                Console.WriteLine(">> [УСПІХ] Токен ALICE_COIN успішно створено та додано в блокчейн!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($">> [ПОМИЛКА] Не вдалося створити токен: {ex.Message}");
+            }
+
+            Console.WriteLine("\n--- Крок 3: Боб намагається випустити BOB_COIN (будучи бідним) ---");
+            try
+            {
+                var bobIcoTx = transactionService.CreateToken(walletBob, "BOB_COIN", 500m);
+                Console.WriteLine(">> ПОМИЛКА: Мережа чомусь прийняла ICO від бідного Боба!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($">> [ОЧІКУВАНА ВІДМОВА МЕРЕЖІ]: {ex.Message}");
+            }
+
+            Console.WriteLine("\n--- Крок 4: Боб намагається вкрасти бренд ALICE_COIN ---");
+            var bobsCoinbase = new Transaction("System", walletBob.Address, 150m, walletBob.PublicKey);
+            var bobBlock = new Block(blockChain.Chain.Count, DateTime.UtcNow, new List<Transaction> { bobsCoinbase }, blockChain.Chain[blockChain.Chain.Count - 1].Hash);
+            await blockChain.ProcessBlockMiningAsync(bobBlock);
+            blockChain.Chain.Add(bobBlock);
+
+            try
+            {
+                Console.WriteLine("Боб має гроші і намагається виконати плагіат тікера 'ALICE_COIN'...");
+                var bobStealTx = transactionService.CreateToken(walletBob, "ALICE_COIN", 5000m);
+                Console.WriteLine(">> ПОМИЛКА: Мережа дозволила дублювання тікера!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($">> [ОЧІКУВАНА ВІДМОВА МЕРЕЖІ]: {ex.Message}");
+            }
+
+            Console.WriteLine("\n--- Крок 5: Аліса переказує 300 токенів ALICE_COIN Бобу ---");
+            try
+            {
+                var transferTx = transactionService.CreateTransaction(walletAlice, walletBob.Address, 300m, "ALICE_COIN", fee: 1m);
+
+                var coinbaseTx = new Transaction("System", walletAlice.Address, 50m, walletAlice.PublicKey);
+                var txs = new List<Transaction> { coinbaseTx, transferTx };
+                var lastBlock = blockChain.Chain[blockChain.Chain.Count - 1];
+                var newBlock = new Block(blockChain.Chain.Count, DateTime.UtcNow, txs, lastBlock.Hash);
+
+                await blockChain.ProcessBlockMiningAsync(newBlock);
+                blockChain.Chain.Add(newBlock);
+                Console.WriteLine(">> [УСПІХ] Переказ 300 ALICE_COIN успішно виконано!");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($">> [ПОМИЛКА] Переказ відхилено: {ex.Message}");
+            }
+
+            Console.WriteLine("\n--- Крок 6: ФІНАЛЬНІ МУЛЬТИВАЛЮТНІ ПОРТФЕЛІ ---");
+            Console.WriteLine("========================================");
+            Console.WriteLine("ПОРТФЕЛЬ АЛІСИ:");
+            blockChain.PrintPortfolio(walletAlice.Address);
+            Console.WriteLine("----------------------------------------");
+            Console.WriteLine("ПОРТФЕЛЬ БОБА:");
+            blockChain.PrintPortfolio(walletBob.Address);
+            Console.WriteLine("========================================");
+
+            Console.ReadLine();
+            ////Services
+            //var displayService = new BlockChainDisplayService();
+            //var blockChain1 = new BlockChainService(initialDifficulty: 4);
+            //var transactionService = new TransactionService(blockChain1.Chain);
+            //var walletService = new WalletService(blockChain1.Chain);
+
+
+
+
+            ////Show menu
+            //Console.WriteLine("--- BlockChain Menu ---");
+            //Console.WriteLine("1. Mine Block");
+            //Console.WriteLine("2. Create Transaction");
+            //Console.WriteLine("3. Show Alice Balance");
+            //Console.WriteLine("4. Show Bob Balance");
+            //Console.WriteLine("5. Validate Blockchain");
+            //Console.WriteLine("6. Print Blockchain");
+            //Console.WriteLine("7. Exit");
+            //Console.WriteLine("8. Change Blockchain");
+            //Console.WriteLine("9. Test: знайти індекс підробленого блоку");
+            //Console.WriteLine("10. Test: Vanity Mining (пошук HEX-слова у хеші)");
+            //Console.WriteLine("11. Test: Смарт-пакування 15 транзакцій у блоки");
+
+
+
+
+            ////Wallets
+            //var walletAlice = walletService.CreateWallet("Alice");
+            //var walletBob = walletService.CreateWallet("Bob");
+            //var walletCharlie = walletService.CreateWallet("Charlie");
+            //var walletDave = walletService.CreateWallet("Dave");
+
+
+
+
+            //Console.WriteLine("Input port for this node: ");
+            //var port = Console.ReadLine();
+
+            //var p2pService = new TcpP2pService(blockChain1, int.Parse(port));
+            //p2pService.Start();
+
+
+            //// Тепер це не імена, а фейкові крипто-адреси у стилі Ethereum,
+            //// детерміновано виведені з публічного ключа гаманця (WalletService.DeriveAddress).
+            //Console.WriteLine($"Alice address:   {walletAlice.Address}");
+            //Console.WriteLine($"Bob address:     {walletBob.Address}");
+            //Console.WriteLine($"Charlie address: {walletCharlie.Address}");
+            //Console.WriteLine($"Dave address:    {walletDave.Address}");
+
+
+
+
+            //while (true)
+            //{
+            //    Console.Write("\nChoose an option: ");
+            //    var choice = Console.ReadLine();
+
+            //    switch (choice)
+            //    {
+            //        case "1":
+            //            await blockChain1.MineBlock(walletAlice.Address); // Mine block with Alice's address as the miner
+            //            Console.WriteLine("Block mined successfully.");
+            //            break;
+
+            //        case "2":
+            //            try
+            //            {
+            //                var transaction1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 10m); // Create transaction from Alice to Bob
+            //                blockChain1.AddTransactionToMemPool(transaction1);
+            //            }
+            //            catch (Exception ex)
+            //            {
+            //                Console.WriteLine($"Error: {ex.Message}");
+            //            }
+            //            break;
+
+            //        case "3":
+            //            Console.WriteLine($"Alice's balance: {walletService.GetBalance(walletAlice.Address)}"); // ALice balance
+            //            break;
+
+            //        case "4":
+            //            Console.WriteLine($"Bob's balance: {walletService.GetBalance(walletBob.Address)}"); // Bob balance
+            //            break;
+
+            //        case "5":
+            //            bool isValid = blockChain1.IsValid();
+            //            displayService.PrintChainValidity(isValid);
+            //            break;
+
+            //        case "6":
+            //            displayService.PrintChain(blockChain1.Chain); // Print blockchain
+            //            break;
+
+            //        case "7":
+            //            return; // Exit
+
+            //        case "8":
+            //            if (blockChain1.Chain.Count > 1 && blockChain1.Chain[1].Transactions.Count > 0)
+            //            {
+            //                blockChain1.Chain[1].Transactions[0].Amount = 100;
+            //                Console.WriteLine("Blockchain modified. Please validate again.");
+            //            }
+            //            else
+            //            {
+            //                Console.WriteLine("Use option 2 to add a transaction first.");
+            //            }
+            //            break;
+
+            //        case "9":
+            //            await TestGetInvalidBlockIndex(blockChain1, transactionService, walletAlice, walletBob);
+            //            break;
+
+            //        case "10":
+            //            await TestVanityMining(blockChain1, transactionService, walletAlice, walletBob);
+            //            break;
+
+            //        case "11":
+            //            await TestSmartChunking(blockChain1, transactionService, walletAlice, walletBob);
+            //            break;
+            //        case "12":
+            //            Console.WriteLine("Input port for connect to another node:");
+            //            var peerPort = int.Parse(Console.ReadLine());
+            //            if(peerPort != 0)
+            //            {
+            //                await 
+            //            }
+            //        default:
+            //            Console.WriteLine("Choose correct option");
+            //            break;
+            //    }
+            //}
 
         }
 

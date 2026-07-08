@@ -3,6 +3,11 @@ using System.Text;
 
 namespace BlockChain_1.Models
 {
+    public enum TransactionType
+    {
+        Transfer,
+        ICO
+    }
     public class Transaction
     {
         public string Id { get; set; }
@@ -14,6 +19,10 @@ namespace BlockChain_1.Models
         public byte[] SenderPublicKey { get; set; }
         public byte[] Signature { get; set; }
 
+        public TransactionType Type { get; set; } = TransactionType.Transfer;
+        public string TokenTicker { get; set; } = "BASE";
+        public decimal TotalSupply { get; set; }
+
         public Transaction(string from, string to, decimal amount, byte[] senderPublicKey)
         {
             Id = Guid.NewGuid().ToString();
@@ -23,16 +32,14 @@ namespace BlockChain_1.Models
             TimeStamp = DateTime.UtcNow;
             SenderPublicKey = senderPublicKey;
         }
-
         public string ToHashString()
         {
             var sig = Signature != null ? Convert.ToHexString(Signature) : string.Empty;
-            return $"{Id}|{From}->{To}|{Amount}|{TimeStamp:O}|{Fee}|{sig}";
+            return $"{Id}|{From}->{To}|{Amount}|{TimeStamp:O}|{Fee}|{Type}|{TokenTicker}|{TotalSupply}|{sig}";
         }
-
         public byte[] GetDataToSign()
         {
-            string raw = $"{Id}{From}{To}{Amount}{TimeStamp:O}";
+            string raw = $"{Id}{From}{To}{Amount}{TimeStamp:O}{Fee}{(int)Type}{TokenTicker}{TotalSupply}";
             return Encoding.UTF8.GetBytes(raw);
         }
         public int GetSizeInBytes()

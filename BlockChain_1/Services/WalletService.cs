@@ -22,20 +22,6 @@ namespace BlockChain_1.Services
             string address = DeriveAddress(publicKey);
             return new Wallet(name, address, publicKey, privateKey);
         }
-
-        /// <summary>
-        /// Виводить "реалістичну" крипто-адресу у стилі Ethereum ("0x" + 40 hex символів,
-        /// рівно 42 символи разом) з публічного ключа гаманця: беремо SHA-256 хеш
-        /// публічного ключа і залишаємо останні 20 байтів.
-        ///
-        /// Це навмисно детермінований і безстанний розрахунок (без словника-реєстру
-        /// адрес десь у пам'яті), оскільки в проєкті існує кілька незалежних
-        /// екземплярів WalletService (Program.cs, TransactionService, BlockChainService),
-        /// і зберігати між ними спільний mutable-стан було б крихко.
-        /// Будь-який вузол може самостійно перерахувати адресу з публічного ключа,
-        /// який транзакція вже несе в собі (Transaction.SenderPublicKey), і звірити
-        /// її з заявленим From — це і є перевірка "адреса належить цьому ключу".
-        /// </summary>
         public static string DeriveAddress(byte[] publicKey)
         {
             if (publicKey == null || publicKey.Length == 0)
@@ -45,11 +31,6 @@ namespace BlockChain_1.Services
             byte[] addressBytes = hash[^20..];
             return "0x" + Convert.ToHexString(addressBytes).ToLowerInvariant();
         }
-
-        /// <summary>
-        /// Перевіряє підпис за наданим публічним ключем (а не за адресою -
-        /// адреса тепер лише хеш ключа і не розкодовується назад у ключ).
-        /// </summary>
         public bool VerifySignature(byte[] publicKey, byte[] data, byte[] signature)
         {
             if (publicKey == null || publicKey.Length == 0 || signature == null || signature.Length == 0)
@@ -66,19 +47,99 @@ namespace BlockChain_1.Services
                 return false;
             }
         }
-
         public decimal GetBalance(string address)
         {
-            decimal balance = 0;
+            return GetTokenBalance(address, "BASE");
+        }
+        public Dictionary<string, decimal> GetPortfolio(string address)
+        {
+            var portfolio = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "BASE", 0m }
+            };
+
             foreach (var block in _chain)
             {
                 foreach (var tx in block.Transactions)
                 {
-                    if (tx.From == address) balance -= tx.Amount + tx.Fee;
-                    if (tx.To == address) balance += tx.Amount;
+                    string ticker = string.IsNullOrWhiteSpace(tx.TokenTicker) ? "BASE" : tx.TokenTicker;
+
+                    if (tx.From == "System")
+                    {
+                        if (tx.To.Equals(address, StringComparison.OrdinalIgnoreCase))
+                        {
+                            portfolio["BASE"] += tx.Amount;
+                        }
+                        continue;
+                    }
+
+                    if (tx.Type == TransactionType.ICO)
+                    {
+                        if (tx.From.Equals(address, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!portfolio.ContainsKey(ticker)) portfolio[ticker] = 0m;
+                            portfolio[ticker] += tx.TotalSupply;
+
+                            portfolio["BASE"] -= tx.Fee;
+                        }
+
+                        var blockMiner = block.Transactions.FirstOrDefault(t => t.From == "System")?.To;
+                        if (blockMiner != null && blockMiner.Equals(address, StringComparison.OrdinalIgnoreCase))
+                        {
+                            portfolio["BASE"] += tx.Fee;
+                        }
+                        continue;
+                    }
+
+                    if (tx.Type == TransactionType.Transfer)
+                    {
+                        if (tx.From.Equals(address, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!portfolio.ContainsKey(ticker)) portfolio[ticker] = 0m;
+                            portfolio[ticker] -= tx.Amount;
+
+                            portfolio["BASE"] -= tx.Fee;
+                        }
+
+                        if (tx.To.Equals(address, StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (!portfolio.ContainsKey(ticker)) portfolio[ticker] = 0m;
+                            portfolio[ticker] += tx.Amount;
+                        }
+
+                        var blockMiner = block.Transactions.FirstOrDefault(t => t.From == "System")?.To;
+                        if (blockMiner != null && blockMiner.Equals(address, StringComparison.OrdinalIgnoreCase))
+                        {
+                            portfolio["BASE"] += tx.Fee;
+                        }
+                    }
                 }
             }
-            return balance;
+
+            return portfolio;
         }
+        public decimal GetTokenBalance(string address, string ticker)
+        {
+            var portfolio = GetPortfolio(address);
+
+            return portfolio.TryGetValue(ticker, out var balance)
+                ? balance
+                : 0;
+        }
+        public bool TokenExists(string ticker)
+        {
+            foreach (var block in _chain)
+            {
+                foreach (var tx in block.Transactions)
+                {
+                    if (tx.Type == TransactionType.ICO &&
+                        tx.TokenTicker.Equals(ticker, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+
+            return ticker.Equals("BASE", StringComparison.OrdinalIgnoreCase);
+        }
+
     }
 }

@@ -16,7 +16,6 @@ namespace BlockChain_1.Models
             PublicKey = publicKey;
             PrivateKey = privateKey;
         }
-
         public byte[] Sign(byte[] data)
         {
             using var ecdsa = ECDsa.Create();

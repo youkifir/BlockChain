@@ -68,28 +68,23 @@ namespace BlockChain_1.Services
                 return new List<(string Hash, bool IsLeft)>();
             }
 
-            // 1. Знаходимо індекс цільової транзакції
             int targetIndex = transactions.FindIndex(t => t.Id == targetTransactionId);
             if (targetIndex == -1)
             {
-                return new List<(string Hash, bool IsLeft)>(); // Транзакцію не знайдено
+                return new List<(string Hash, bool IsLeft)>();
             }
 
-            // 2. Будуємо всі рівні дерева
             List<List<string>> treeLevels = new List<List<string>>();
 
-            // Початковий рівень — це хеші самих транзакцій
             List<string> currentLevel = transactions.Select(t => t.GetHashCode().ToString()).ToList();
             treeLevels.Add(currentLevel);
 
-            // Будуємо дерево вгору, поки не залишиться один корінь
             while (currentLevel.Count > 1)
             {
                 List<string> nextLevel = new List<string>();
                 for (int i = 0; i < currentLevel.Count; i += 2)
                 {
                     string left = currentLevel[i];
-                    // Якщо пари немає (непарна кількість), дублюємо лівий елемент
                     string right = (i + 1 < currentLevel.Count) ? currentLevel[i + 1] : left;
 
                     nextLevel.Add(HashString(left + right));
@@ -98,11 +93,9 @@ namespace BlockChain_1.Services
                 treeLevels.Add(currentLevel);
             }
 
-            // 3. Збираємо доказ (Proof), піднімаючись по рівнях вгору
             List<(string Hash, bool IsLeft)> proof = new List<(string Hash, bool IsLeft)>();
             int currentIndex = targetIndex;
 
-            // Проходимо по всіх рівнях, крім останнього (де корінь)
             for (int i = 0; i < treeLevels.Count - 1; i++)
             {
                 List<string> level = treeLevels[i];
@@ -113,21 +106,17 @@ namespace BlockChain_1.Services
 
                 if (isTargetLeft)
                 {
-                    // Якщо поточний елемент лівий, то сусід — правий
-                    // Якщо це останній елемент і пари немає, він дублює сам себе
                     neighborIndex = (currentIndex + 1 < level.Count) ? currentIndex + 1 : currentIndex;
                     isNeighborLeft = false;
                 }
                 else
                 {
-                    // Якщо поточний елемент правий, то сусід — лівий
                     neighborIndex = currentIndex - 1;
                     isNeighborLeft = true;
                 }
 
                 proof.Add((level[neighborIndex], isNeighborLeft));
 
-                // Переходимо на рівень вище: індекс батька — це завжди поточний індекс поділений на 2
                 currentIndex /= 2;
             }
 
