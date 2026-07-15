@@ -664,11 +664,12 @@ namespace BlockChain_1.Services
         {
             Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Валидация сетевых блоков (P2P Security) ===");
 
-            int originalDifficulty = blockChain.Difficulty;
+            // Запам'ятовуємо оригінальний префікс "cafe"
             string backupPrefix = blockChain.VanityPrefix;
+            // Тимчасово ставимо легкий префікс "0", щоб майнінг для тесту зайняв 1 мілісекунду
+            blockChain.VanityPrefix = "0";
 
-            Console.WriteLine($"Поточна складність мережі: {originalDifficulty} (Блок має починатися з {new string('0', originalDifficulty)})");
-
+            Console.WriteLine($"Тимчасовий префікс мережі для тесту: \"{blockChain.VanityPrefix}\"");
             var lastBlock = blockChain.Chain[^1];
 
             // ==========================================
@@ -690,11 +691,10 @@ namespace BlockChain_1.Services
             Console.WriteLine("[Мережа] Зловмисник надсилає Блок #1...");
             FakeNetworkTrigger(fakeBlock1, blockChain, hashingService);
 
-
             // ==========================================
-            // 🚨 АТАКА 2: Хеш чесний, але Nonce не підібраний під складність (Немає PoW)
+            // 🚨 АТАКА 2: Хеш чесний, але Nonce не підібраний під VanityPrefix
             // ==========================================
-            Console.WriteLine("\n--- Атака 2: Хеш чесний, але Nonce не підібраний під складність (Немає PoW) ---");
+            Console.WriteLine("\n--- Атака 2: Хеш чесний, але Nonce не підібраний під префікс (Немає PoW) ---");
 
             var fakeTxList2 = new List<Transaction>
     {
@@ -703,29 +703,20 @@ namespace BlockChain_1.Services
 
             var fakeBlock2 = new Block(blockChain.Chain.Count, DateTime.UtcNow, fakeTxList2, lastBlock.Hash)
             {
-                Nonce = 1
+                Nonce = 1 // Рандомний Nonce, який точно не дасть префікс "0"
             };
 
             string realMerkle = hashingService.GetMerkleTree(fakeBlock2.Transactions);
-            fakeBlock2.Hash = hashingService.ComputeHash(fakeBlock2, realMerkle);
+            fakeBlock2.Hash = hashingService.ComputeHash(fakeBlock2);
 
             Console.WriteLine($"[Мережа] Зловмисник надіслав правильний хеш ({fakeBlock2.Hash}), але без виконання PoW.");
             Console.WriteLine("[Мережа] Надсилання Блоку #2...");
             FakeNetworkTrigger(fakeBlock2, blockChain, hashingService);
 
-
             // ==========================================
-            // ✅ СЦЕНАРІЙ 3: Валідний блок (для демонстрації успіху)
+            // ✅ СЦЕНАРІЙ 3: Валідний блок
             // ==========================================
             Console.WriteLine("\n--- Сценарій 3: Надсилання повністю валідного змайнёного блоку ---");
-
-            // ХАК ДЛЯ ТЕСТУ: Встановлюємо складність у 0, щоб БУДЬ-ЯКИЙ хеш вважався валідним за складністю
-            // Замість прямого зміни private set Difficulty, ми можемо тимчасово змінити VanityPrefix на порожній або "0"
-            // Але у вашому FakeNetworkTrigger перевіряється: new string('0', blockChain.Difficulty).
-            // Оскільки Difficulty має private set, ми замайнимо блок чесно, просто підібравши його для Difficulty = 1, щоб це було швидко:
-
-            // Для швидкості тесту згенеруємо блок під легку складність, якщо ваш сервіс дозволяє.
-            // Якщо Difficulty неможливо змінити динамічно, ми просто підберемо Nonце в циклі прямо тут за 1 мілісекунду!
 
             var validTxList = new List<Transaction>
     {
@@ -735,15 +726,12 @@ namespace BlockChain_1.Services
             var validBlock = new Block(blockChain.Chain.Count, DateTime.UtcNow, validTxList, lastBlock.Hash);
             string validMerkle = hashingService.GetMerkleTree(validBlock.Transactions);
 
-            Console.WriteLine("[Тест] Чесно підбираємо Nonce під реальну складність мережі для тестового блоку...");
-
-            // Чесний швидкий майнінг для тесту
-            string requiredZeros = new string('0', blockChain.Difficulty);
+            // Чесно підбираємо Nonce під наш тимчасовий префікс "0"
             validBlock.Nonce = 0;
             while (true)
             {
                 string hash = hashingService.ComputeHash(validBlock, validMerkle);
-                if (hash.StartsWith(requiredZeros))
+                if (hash.StartsWith(blockChain.VanityPrefix, StringComparison.OrdinalIgnoreCase))
                 {
                     validBlock.Hash = hash;
                     break;
@@ -751,15 +739,17 @@ namespace BlockChain_1.Services
                 validBlock.Nonce++;
             }
 
-            Console.WriteLine($"[Тест] Знайдено валідний хеш: {validBlock.Hash} з Nonce: {validBlock.Nonce}");
+            Console.WriteLine($"[Тест] Чесно знайдено валідний хеш: {validBlock.Hash} з Nonce: {validBlock.Nonce}");
             Console.WriteLine("[Мережа] Надсилання повністю валідного Блоку #3...");
             FakeNetworkTrigger(validBlock, blockChain, hashingService);
+
+            // Відновлюємо оригінальний префікс "cafe"
+            blockChain.VanityPrefix = backupPrefix;
         }
         private static void FakeNetworkTrigger(Block block, BlockChainService blockChain, HashingService hashingService)
         {
-            // Сюди вставляється логіка з HandleNewBlockMessage для перевірки всередині консольного тесту
             string merkleRoot = hashingService.GetMerkleTree(block.Transactions);
-            string calculatedHash = hashingService.ComputeHash(block, merkleRoot);
+            string calculatedHash = hashingService.ComputeHash(block);
 
             if (!string.Equals(calculatedHash, block.Hash, StringComparison.OrdinalIgnoreCase))
             {
@@ -769,8 +759,7 @@ namespace BlockChain_1.Services
                 return;
             }
 
-            string targetZeros = new string('0', blockChain.Difficulty);
-            if (!calculatedHash.StartsWith(targetZeros))
+            if (!calculatedHash.StartsWith(blockChain.VanityPrefix, StringComparison.OrdinalIgnoreCase))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"[SECURITY] 🚨 Обнаружен фейковый block! (Причина: Немає підтвердження складності PoW)");
@@ -781,6 +770,75 @@ namespace BlockChain_1.Services
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"[P2P Успіх] Мережевий блок #{block.Index} успішно верифіковано та додано!");
             Console.ResetColor();
+        }
+        public static async Task TestMerkleTreeProtection(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
+        {
+            Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Інтеграція Дерева Меркла та Захист блоку ===");
+
+            // Тимчасово вимикаємо складний майнінг "cafe", щоб тест пройшов миттєво
+            string backupPrefix = blockChain.VanityPrefix;
+            blockChain.VanityPrefix = "0";
+
+            // Очищаємо мемпул перед початком
+            blockChain.ClearMempool();
+
+            // Гарантуємо баланс Аліси для тесту (намайнимо їй монет, якщо мало)
+            if (blockChain.GetBalance(walletAlice.Address) < 50m)
+            {
+                await blockChain.AddBlockWithValidation(new List<Transaction>(), walletAlice.Address);
+            }
+
+            Console.WriteLine("\n[Крок 1] Створення 3 транзакцій для тесту Дерева Меркла...");
+            var tx1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 10m, fee: 1m);
+            var tx2 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 5m, fee: 1m);
+            var tx3 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 2.5m, fee: 1m);
+
+            blockChain.AddTransactionToMemPool(tx1);
+            blockChain.AddTransactionToMemPool(tx2);
+            blockChain.AddTransactionToMemPool(tx3);
+
+            Console.WriteLine($"[Мемпул] Додано {blockChain.GetMempoolCount()} транзакцій. Запускаємо майнінг блоку...");
+
+            // Майнимо блок (використовуй свій метод майнінгу, який забирає транзакції з мемпулу)
+            int targetBlockIndex = blockChain.Chain.Count;
+            // Наприклад, викликаємо MineBlock або AddBlockWithValidation
+            await blockChain.MineBlock(walletAlice.Address);
+
+            Console.WriteLine($"\n[Крок 2] Блок #{targetBlockIndex} успішно замайнено.");
+            bool initialValidation = blockChain.IsValid();
+            Console.WriteLine($"Початкова перевірка блокчейну: {(initialValidation ? "ВАЛІДНИЙ (Успіх ✅)" : "НЕВАЛІДНИЙ ❌")}");
+
+            // ==========================================
+            // 🚨 ІМІТАЦІЯ ХАКЕРСЬКОЇ АТАКИ
+            // ==========================================
+            Console.WriteLine($"\n[Крок 3] 🚨 Здійснюємо хакерську атаку на Блок #{targetBlockIndex}...");
+            Console.WriteLine($"Оригінальна сума першої транзакції: {blockChain.Chain[targetBlockIndex].Transactions[0].Amount} BASE");
+
+            // Пряме втручання в історію транзакцій (підміна суми)
+            blockChain.Chain[targetBlockIndex].Transactions[0].Amount = 999m;
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[Хакер] Змінено Amount першої транзакції на: {blockChain.Chain[targetBlockIndex].Transactions[0].Amount} BASE!");
+            Console.ResetColor();
+
+            Console.WriteLine("\n[Крок 4] Повторна перевірка цілісності мережі через IsValid()...");
+            bool afterAttackValidation = blockChain.IsValid();
+
+            if (!afterAttackValidation)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ ТЕСТУ] Метод IsValid() повернув: {afterAttackValidation}.");
+                Console.WriteLine("[!] Система захисту Меркла спрацювала! Зміна однієї цифри змінила хеш листа, Корінь Меркла та зламала фінальний хеш блоку!");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine(">> [БАГ/ПОМИЛКА] Блокчейн визнав підроблені дані валідними! Перевір ComputeHash.");
+                Console.ResetColor();
+            }
+
+            // Відновлюємо оригінальний префікс
+            blockChain.VanityPrefix = backupPrefix;
         }
     }
 }

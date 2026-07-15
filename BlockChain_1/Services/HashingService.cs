@@ -6,19 +6,25 @@ namespace BlockChain_1.Services
 {
     public class HashingService
     {
+        public string ComputeHash(Block block)
+        {
+            // Сам бере транзакції блоку і будує дерево
+            string merkleRoot = GetMerkleTree(block.Transactions);
+
+            // Перенаправляє в твій чинний метод
+            return ComputeHash(block, merkleRoot);
+        }
         public string ComputeHash(Block block, string merkleRoot)
         {
             var blockData = $"{block.Index}{block.TimeStamp.ToString("O")}{merkleRoot}{block.PreviousHash}{block.Nonce}";
             return HashString(blockData);
         }
-
         private string HashString(string input)
         {
             byte[] inputBytes = Encoding.UTF8.GetBytes(input);
             byte[] hashBytes = SHA256.HashData(inputBytes);
             return Convert.ToHexString(hashBytes);
         }
-
         public string GetMerkleTree(List<Transaction> transactions)
         {
             if (transactions == null || transactions.Count == 0)

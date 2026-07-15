@@ -58,7 +58,8 @@ namespace BlockChain_1
             Console.WriteLine("15. Test: Reliable Economy (надійна економіка)");
             Console.WriteLine("16. Test: Захист Мемпулу, RBF та Тіньові баланси");
             Console.WriteLine("17. Test: Макроекономіка блокчейну (Халвінг, Дилема, Спалювання)");
-            Console.WriteLine("18. Test: Валидация сетевых блоков (P2P Security)"); 
+            Console.WriteLine("18. Test: Валидация сетевых блоков (P2P Security)");
+            Console.WriteLine("19. Test: Дерево Меркла та Захист блоку від підміни");
 
             //Main loop
             while (true)
@@ -157,6 +158,9 @@ namespace BlockChain_1
                         break;
                     case "18":
                         Tests.TestP2pSecurity(blockChain1, hashingService); // Передай сюди інстанс hashingService
+                        break;
+                    case "19":
+                        await Tests.TestMerkleTreeProtection(blockChain1, transactionService, walletAlice, walletBob);
                         break;
 
                     default:
