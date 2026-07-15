@@ -60,6 +60,7 @@ namespace BlockChain_1
             Console.WriteLine("17. Test: Макроекономіка блокчейну (Халвінг, Дилема, Спалювання)");
             Console.WriteLine("18. Test: Валидация сетевых блоков (P2P Security)");
             Console.WriteLine("19. Test: Дерево Меркла та Захист блоку від підміни");
+            Console.WriteLine("20. Test: Захист від Атаки 51% (Double Spend Rollback)");
 
             //Main loop
             while (true)
@@ -161,6 +162,10 @@ namespace BlockChain_1
                         break;
                     case "19":
                         await Tests.TestMerkleTreeProtection(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+                    case "20": 
+                        var walletTarget = new WalletService(blockChain1.Chain).CreateWallet("HackerTarget");
+                        await Tests.TestDoubleSpendOnRollback(blockChain1, transactionService, walletAlice, walletBob, walletTarget);
                         break;
 
                     default:

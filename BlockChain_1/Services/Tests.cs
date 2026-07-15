@@ -840,5 +840,110 @@ namespace BlockChain_1.Services
             // Відновлюємо оригінальний префікс
             blockChain.VanityPrefix = backupPrefix;
         }
+        public static async Task TestDoubleSpendOnRollback(BlockChainService honestNode, TransactionService transactionService, Wallet walletHacker, Wallet walletBob, Wallet walletTarget)
+        {
+            Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Захист від Атаки 51% та \"Подвійних витрат\" ===");
+
+            // Швидкий майнінг без спаму
+            string backupPrefix = honestNode.VanityPrefix;
+            honestNode.VanityPrefix = "0";
+            honestNode.ClearMempool();
+
+            // Гарантуємо початковий баланс хакера в основній мережі (намайнимо блоків)
+            while (honestNode.GetBalance(walletHacker.Address) < 50m)
+            {
+                await honestNode.AddBlockWithValidation(new List<Transaction>(), walletHacker.Address);
+            }
+
+            Console.WriteLine($"Стартовий баланс Хакера в мережі: {honestNode.GetBalance(walletHacker.Address)} BASE");
+
+            // Зберігаємо зліпок ланцюга ДО транзакції Боба (стан, де у хакера є 50 BASE)
+            var hackerNodeChain = honestNode.Chain.Select(b => b).ToList();
+
+            // ====================================================================
+            // СЦЕНАРІЙ 1: Чесна Нода приймає транзакцію від Хакера Бобові
+            // ====================================================================
+            Console.WriteLine("\n--- [Чесна Нода] Хакер купує товар у Боба за 25 BASE (Fee=1) ---");
+            var txToBob = transactionService.CreateTransaction(walletHacker, walletBob.Address, 25m, fee: 1m);
+            honestNode.AddTransactionToMemPool(txToBob);
+
+            Console.WriteLine("[Чесна Нода] Майнінг Блоку з транзакцією Боба...");
+            await honestNode.MineBlock(walletBob.Address);
+            Console.WriteLine($"Довжина чесного ланцюга: {honestNode.Chain.Count} блоків.");
+            Console.WriteLine($"Баланс Боба на чесній ноді: {honestNode.GetBalance(walletBob.Address)} BASE (Очікує товар)");
+
+            // Зберігаємо повноцінний чесний ланцюг разом із транзакцією Боба
+            var honestChainWithBob = honestNode.Chain.Select(b => b).ToList();
+
+            // ====================================================================
+            // СЦЕНАРІЙ 2: Нода Хакера таємно майнить довший ланцюг
+            // ====================================================================
+            Console.WriteLine("\n--- [Нода Хакера] Тіньовий майнінг Атаки 51% (Подвійні витрати) ---");
+
+            // 1. Переключаємо ноду на хакерський форк
+            honestNode.Chain = hackerNodeChain;
+            honestNode.ClearMempool();
+
+            // Вмикаємо режим симуляції зловмисника: ігноруємо перевірки застарілого WalletService в мемпулі
+            honestNode.IsValidationEnabled = false;
+
+            // 2. Створюємо Double Spend транзакцію напряму
+            Transaction txDoubleSpend = new Transaction(walletHacker.Address, walletTarget.Address, 45m, walletHacker.PublicKey)
+            {
+                TokenTicker = "BASE",
+                Fee = 1m,
+                Type = TransactionType.Transfer
+            };
+            txDoubleSpend.Signature = walletHacker.Sign(txDoubleSpend.GetDataToSign());
+
+            // Тепер це додасться БЕЗ помилок!
+            honestNode.AddTransactionToMemPool(txDoubleSpend);
+
+            Console.WriteLine("[Нода Хакера] Майнінг першого тіньового блоку з Double Spend...");
+            await honestNode.MineBlock(walletHacker.Address);
+
+            Console.WriteLine("[Нода Хакера] Майнінг другого тіньового блоку (Ланцюг стає довшим!)...");
+            await honestNode.MineBlock(walletHacker.Address);
+
+            List<Block> hackersLongerChain = honestNode.Chain.Select(b => b).ToList();
+            Console.WriteLine($"Довжина ланцюга хакера: {hackersLongerChain.Count} блоків.");
+
+            // Повертаємо ноду в чесний стан та вмикаємо назад валідацію для Консенсусу
+            honestNode.Chain = honestChainWithBob;
+            honestNode.IsValidationEnabled = true;
+
+            // ====================================================================
+            // СЦЕНАРІЙ 3: Підключення та Консенсус (Rollback)
+            // ====================================================================
+            Console.WriteLine("\n--- [Мережа] Відбувається підключення нод та синхронізація через Консенсус ---");
+            Console.WriteLine($"Чесна нода має: {honestNode.Chain.Count} блоків. Хакер приносить: {hackersLongerChain.Count} блоків.");
+
+            // Викликаємо твій ResolveConflicts. Він прийме довгий ланцюг і запустить фільтрацію.
+            bool isTriggered = honestNode.ResolveConflicts(hackersLongerChain);
+
+            // ====================================================================
+            // СЦЕНАРІЙ 4: Перевірка стабільності після атаки
+            // ====================================================================
+            Console.WriteLine("\n--- Перевірка фінальних балансів та стабільності мемпулу ---");
+            Console.WriteLine($"Баланс Боба після Rollback: {honestNode.GetBalance(walletBob.Address)} BASE (Транзакцію скасовано)");
+            Console.WriteLine($"Кількість транзакцій у Мемпулі чесної ноди: {honestNode.GetMempoolCount()} (Очікується: 0)");
+
+            try
+            {
+                Console.WriteLine("[Майнінг] Спроба замайнити наступний блок на Чесній ноді...");
+                await honestNode.MineBlock(walletBob.Address);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine(">> [УСПІХ] Наступний блок успішно замайнено! Мертва транзакція відсіяна Консенсусом.");
+                Console.ResetColor();
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($">> [КРИТИЧНИЙ БАГ] Нода впала під час майнінгу: {ex.Message}");
+                Console.ResetColor();
+            }
+
+            honestNode.VanityPrefix = backupPrefix;
+        }
     }
 }

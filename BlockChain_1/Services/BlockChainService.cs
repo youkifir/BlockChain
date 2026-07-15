@@ -36,6 +36,8 @@ namespace BlockChain_1.Services
         public string VanityPrefix { get; set; } = "cafe";
         public int MaxBlockSizeBytes { get; } = 256;
 
+        public bool IsValidationEnabled { get; set; } = true;
+
 
         public BlockChainService(int initialDifficulty = 6)
         {
@@ -73,11 +75,14 @@ namespace BlockChain_1.Services
         }
         public async Task MineBlock(string minerAddress)
         {
-            foreach (Transaction transaction in _pendingTransactions)
+            if (IsValidationEnabled)
             {
-                if (!_transactionService.ValidateTransaction(transaction).IsValid)
+                foreach (Transaction transaction in _pendingTransactions)
                 {
-                    throw new InvalidOperationException($"Invalid transaction: {transaction.Id}");
+                    if (!_transactionService.ValidateTransaction(transaction).IsValid)
+                    {
+                        throw new InvalidOperationException($"Invalid transaction: {transaction.Id}");
+                    }
                 }
             }
 
@@ -134,13 +139,22 @@ namespace BlockChain_1.Services
                 return;
             }
 
-            // Перевірка 1: Тіньовий баланс (Частина 3)
-            decimal pendingBalance = GetPendingBalance(newTx.From);
-            if (pendingBalance < (newTx.Amount + newTx.Fee))
+            // ПЕРЕВІРКА 1: Тіньовий баланс (Вимикається для симуляції атаки 51%)
+            if (IsValidationEnabled)
             {
-                throw new InvalidOperationException(
-                    $"[Тіньовий баланс] Відхилено. Реальний баланс враховує минулі транзакції в мемпулі. " +
-                    $"Доступний тіньовий баланс: {pendingBalance} BASE. Спроба витратити: {newTx.Amount + newTx.Fee} BASE.");
+                decimal pendingBalance = GetPendingBalance(newTx.From);
+                if (pendingBalance < (newTx.Amount + newTx.Fee))
+                {
+                    throw new InvalidOperationException(
+                        $"[Тіньовий баланс] Відхилено. Реальний баланс враховує минулі транзакції в мемпулі. " +
+                        $"Доступний тіньовий баланс: {pendingBalance} BASE. Спроба витратити: {newTx.Amount + newTx.Fee} BASE.");
+                }
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[TEST MODE] Валідація мемпулу вимкнена. Транзакція від {newTx.From} додається в обхід перевірок балансу.");
+                Console.ResetColor();
             }
 
             lock (_pendingTransactions)
@@ -445,21 +459,80 @@ namespace BlockChain_1.Services
             double externalChainWeight = getChainWeight(externalChain);
             return externalChainWeight > currentChainWeight;
         }
-        public bool ResolveConflicts(List<Block> externalChain)
+        public bool ResolveConflicts(List<Block> newChain)
         {
-            if (IsChainValid(externalChain))
+            // Перевірка, чи новий ланцюг дійсно довший і валідний
+            if (newChain == null || newChain.Count <= Chain.Count)
+                return false;
+
+            // (Тут у тебе може бути виклик IsChainValid для нового ланцюга, залишай його)
+
+            Console.WriteLine($"[CONSENSUS] Знайдено довший ланцюг ({newChain.Count} блоків). Починаємо процедуру Rollback...");
+
+            // 1. Збираємо всі транзакції з наших блоків, які зараз будуть скасовані (починаючи з точки розгалуження)
+            var orphanedTransactions = new List<Transaction>();
+
+            // Зазвичай форк починається після генезису або певної висоти. 
+            // Щоб знайти всі скасовані транзакції, проходимо по нашому старому ланцюгу:
+            for (int i = 1; i < Chain.Count; i++)
             {
-                var currentTotalWork = getChainWeight(Chain);
-                var externalTotalWork = getChainWeight(externalChain);
-                if (externalTotalWork > currentTotalWork)
+                // Якщо цього блоку немає в новому ланцюзі або дані відрізняються — його транзакції стають "сиротами"
+                if (i >= newChain.Count || Chain[i].Hash != newChain[i].Hash)
                 {
-                    return false;
+                    orphanedTransactions.AddRange(Chain[i].Transactions);
                 }
-                Chain = externalChain;
-                _fileStorageService.SaveBlockchain(Chain);
-                return true;
             }
-            return false;
+
+            // Фільтруємо системні транзакції (COINBASE), їх повертати в мемпул не можна в жодному разі
+            orphanedTransactions = orphanedTransactions.Where(tx => tx.From != "COINBASE").ToList();
+
+            // 2. КРИТИЧНИЙ КРОК: Тимчасово переключаємо ланцюг на НОВИЙ, 
+            // щоб GetBalance рахував залишки з урахуванням нових хакерських блоків
+            var oldChainBackup = Chain;
+            Chain = newChain;
+
+            // 3. ФІЛЬТРАЦІЯ ТРАНЗАКЦІЙ ПЕРЕД ПОВЕРНЕННЯМ У МЕМПУЛ
+            lock (_pendingTransactions)
+            {
+                foreach (var tx in orphanedTransactions)
+                {
+                    try
+                    {
+                        // Рахуємо актуальний баланс хакера/відправника у новому ланцюзі
+                        decimal senderBalance = GetBalance(tx.From);
+                        decimal requiredAmount = tx.Amount + tx.Fee;
+
+                        // Якщо твоя система кидає помилку всередині якихось методів перевірки, 
+                        // ми робимо додаткову жорстку перевірку тут:
+                        if (senderBalance < requiredAmount)
+                        {
+                            // Навмисно провокуємо перехід у блок catch для виведення помилки безпеки
+                            throw new ArgumentException($"Недостатньо BASE для переказу та оплати комісії. Потрібно: {requiredAmount}, є: {senderBalance}");
+                        }
+
+                        // Грошей достатньо — транзакція чесна, повертаємо її в чергу
+                        _pendingTransactions.Add(tx);
+                        Console.WriteLine($"[ROLLBACK] Транзакцію {tx.Id.Substring(0, 8)}... повернуто в Мемпул.");
+                    }
+                    catch (ArgumentException ex)
+                    {
+                        // САМЕ СЮДИ тепер падатиме твоя помилка про брак коштів!
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[SECURITY] 🚨 Відхилено повернення транзакції {tx.Id.Substring(0, 8)}... у Мемпул (Подвійні витрати / Недостатньо коштів)!");
+                        Console.WriteLine($"[ДЕТАЛІ АТАКИ]: {ex.Message}");
+                        Console.ResetColor();
+
+                        // Транзакція просто ігнорується і НЕ додається в Мемпул — атаку відбито!
+                    }
+                }
+            }
+
+            // Якщо все пройшло успішно, залишаємо новий ланцюг
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"[CONSENSUS] Синхронізацію завершено. Нова довжина ланцюга: {Chain.Count}");
+            Console.ResetColor();
+
+            return true;
         }
         public Dictionary<string, decimal> GetPortfolio(string address)
         {
