@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Sockets;
 using System.Text;
@@ -15,11 +16,16 @@ namespace BlockChain_1.Services
         public readonly TcpListener _listener;
         private readonly ConcurrentBag<TcpClient> _clients = new ConcurrentBag<TcpClient>();
         private readonly BlockChainService _blockChainService;
-        public TcpP2pService(BlockChainService blockChainService, int port)
+        private readonly HashingService _hashingService; // Додаємо сервіс хешування для P2P Security
+
+        // Оновлюємо конструктор, додаючи HashingService
+        public TcpP2pService(BlockChainService blockChainService, HashingService hashingService, int port)
         {
             _blockChainService = blockChainService;
+            _hashingService = hashingService;
             _listener = new TcpListener(System.Net.IPAddress.Any, port);
         }
+
         public void Start()
         {
             _listener.Start();
@@ -38,7 +44,6 @@ namespace BlockChain_1.Services
         }
         private async Task HandleClientAsync(TcpClient client)
         {
-
             using var stream = client.GetStream();
             using var reader = new System.IO.BinaryReader(stream, Encoding.UTF8);
 
@@ -47,16 +52,13 @@ namespace BlockChain_1.Services
                 try
                 {
                     var messageLengthBytes = reader.ReadInt32();
-
                     var messageBytes = reader.ReadBytes(messageLengthBytes);
                     var messageJson = Encoding.UTF8.GetString(messageBytes);
                     if (messageJson != null)
                     {
                         Console.WriteLine($"Received message from {client.Client.RemoteEndPoint}: {messageJson}");
-                        // Handle the received message (e.g., process transactions, blocks, etc.)
                         ProcessMessage(messageJson);
                     }
-
                 }
                 catch (Exception ex)
                 {
@@ -76,17 +78,52 @@ namespace BlockChain_1.Services
                     var newBlock = JsonSerializer.Deserialize<Block>(message.Data);
                     if (newBlock == null) return;
 
+                    Console.WriteLine($"[P2P] Перевірка мережевого блоку #{newBlock.Index}...");
+
+                    // =========================================================
+                    // 🛡️ ЗОНА P2P SECURITY: САМОСТІЙНА ВАЛІДАЦІЯ БЛОКУ
+                    // =========================================================
+
+                    // 1. Обчислюємо корінь Меркла для транзакцій, що прийшли в блоці
+                    string calculatedMerkleRoot = _hashingService.GetMerkleTree(newBlock.Transactions);
+
+                    // 2. Самостійно перераховуємо хеш блоку
+                    string calculatedBlockHash = _hashingService.ComputeHash(newBlock, calculatedMerkleRoot);
+
+                    // Перевірка А: Чи збігається наш розрахований хеш з тим, що прийшов у блоці?
+                    if (!string.Equals(calculatedBlockHash, newBlock.Hash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[SECURITY] 🚨 Обнаружен фейковый блок! Надісланий хеш ({newBlock.Hash}) не збігається з розрахованим ({calculatedBlockHash}).");
+                        Console.ResetColor();
+                        return; // Повністю блокуємо додавання блоку в ланцюг
+                    }
+
+                    // Перевірка Б: Чи відповідає хеш складності PoW (кількості нулів відповідно до Difficulty)?
+                    string targetZeros = new string('0', _blockChainService.Difficulty);
+                    if (!calculatedBlockHash.StartsWith(targetZeros))
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[SECURITY] 🚨 Обнаружен фейковый блок! Хеш ({calculatedBlockHash}) не відповідає складності мережі (має починатися з '{targetZeros}').");
+                        Console.ResetColor();
+                        return; // Блокуємо фейк
+                    }
+
+                    // Перевірка В: Зв'язність ланцюга
                     var lastBlock = _blockChainService.Chain.Last();
                     if (newBlock.Index == lastBlock.Index + 1 && newBlock.PreviousHash == lastBlock.Hash)
                     {
                         _blockChainService.Chain.Add(newBlock);
+                        Console.ForegroundColor = ConsoleColor.Green;
                         Console.WriteLine($"New block added to the chain: {newBlock.Index}");
+                        Console.ResetColor();
                     }
                     else
                     {
-                        Console.WriteLine($"Received invalid block: {newBlock.Index}");
+                        Console.WriteLine($"Received invalid block linkage: {newBlock.Index}");
                     }
                     break;
+
                 case MessageType.SyncChain:
                     var receivedChain = JsonSerializer.Deserialize<List<Block>>(message.Data);
                     if (receivedChain == null) return;
@@ -98,14 +135,14 @@ namespace BlockChain_1.Services
                     }
                     else
                     {
-                        BroadcastSync(); // Request the correct chain from peers
+                        BroadcastSync();
                     }
                     break;
+
                 default:
                     Console.WriteLine($"Unknown message type: {message.Type}");
                     break;
             }
-
         }
         private void BroadcastSync()
         {
@@ -149,7 +186,7 @@ namespace BlockChain_1.Services
                 await client.ConnectAsync(ipAddress, port);
                 _clients.Add(client);
                 Console.WriteLine($"Connected to peer: {ipAddress}:{port}");
-                BroadcastSync(); // Send the current blockchain to the newly connected peer
+                BroadcastSync();
                 await Task.Run(() => HandleClientAsync(client));
             }
             catch (Exception ex)

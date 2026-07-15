@@ -660,5 +660,127 @@ namespace BlockChain_1.Services
             // Відновлюємо оригінальний префікс "cafe"
             blockChain.VanityPrefix = backupPrefix;
         }
+        public static void TestP2pSecurity(BlockChainService blockChain, HashingService hashingService)
+        {
+            Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Валидация сетевых блоков (P2P Security) ===");
+
+            int originalDifficulty = blockChain.Difficulty;
+            string backupPrefix = blockChain.VanityPrefix;
+
+            Console.WriteLine($"Поточна складність мережі: {originalDifficulty} (Блок має починатися з {new string('0', originalDifficulty)})");
+
+            var lastBlock = blockChain.Chain[^1];
+
+            // ==========================================
+            // 🚨 АТАКА 1: Блок із підробленим (вигаданим) хешем
+            // ==========================================
+            Console.WriteLine("\n--- Атака 1: Надсилання блоку з вигаданим хешем (без майнінгу) ---");
+
+            var fakeTxList1 = new List<Transaction>
+    {
+        new Transaction("0xFakeSender", "0xFakeReceiver", 9999m, null) { Fee = 0 }
+    };
+
+            var fakeBlock1 = new Block(blockChain.Chain.Count, DateTime.UtcNow, fakeTxList1, lastBlock.Hash)
+            {
+                Nonce = 12345,
+                Hash = "FE77777777777777777777777777777777777777777777777777777777777777"
+            };
+
+            Console.WriteLine("[Мережа] Зловмисник надсилає Блок #1...");
+            FakeNetworkTrigger(fakeBlock1, blockChain, hashingService);
+
+
+            // ==========================================
+            // 🚨 АТАКА 2: Хеш чесний, але Nonce не підібраний під складність (Немає PoW)
+            // ==========================================
+            Console.WriteLine("\n--- Атака 2: Хеш чесний, але Nonce не підібраний під складність (Немає PoW) ---");
+
+            var fakeTxList2 = new List<Transaction>
+    {
+        new Transaction("0xSpammer", "0xTarget", 10m, null) { Fee = 1 }
+    };
+
+            var fakeBlock2 = new Block(blockChain.Chain.Count, DateTime.UtcNow, fakeTxList2, lastBlock.Hash)
+            {
+                Nonce = 1
+            };
+
+            string realMerkle = hashingService.GetMerkleTree(fakeBlock2.Transactions);
+            fakeBlock2.Hash = hashingService.ComputeHash(fakeBlock2, realMerkle);
+
+            Console.WriteLine($"[Мережа] Зловмисник надіслав правильний хеш ({fakeBlock2.Hash}), але без виконання PoW.");
+            Console.WriteLine("[Мережа] Надсилання Блоку #2...");
+            FakeNetworkTrigger(fakeBlock2, blockChain, hashingService);
+
+
+            // ==========================================
+            // ✅ СЦЕНАРІЙ 3: Валідний блок (для демонстрації успіху)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 3: Надсилання повністю валідного змайнёного блоку ---");
+
+            // ХАК ДЛЯ ТЕСТУ: Встановлюємо складність у 0, щоб БУДЬ-ЯКИЙ хеш вважався валідним за складністю
+            // Замість прямого зміни private set Difficulty, ми можемо тимчасово змінити VanityPrefix на порожній або "0"
+            // Але у вашому FakeNetworkTrigger перевіряється: new string('0', blockChain.Difficulty).
+            // Оскільки Difficulty має private set, ми замайнимо блок чесно, просто підібравши його для Difficulty = 1, щоб це було швидко:
+
+            // Для швидкості тесту згенеруємо блок під легку складність, якщо ваш сервіс дозволяє.
+            // Якщо Difficulty неможливо змінити динамічно, ми просто підберемо Nonце в циклі прямо тут за 1 мілісекунду!
+
+            var validTxList = new List<Transaction>
+    {
+        new Transaction("0xHonestUser", "0xMerchant", 5m, null) { Fee = 1 }
+    };
+
+            var validBlock = new Block(blockChain.Chain.Count, DateTime.UtcNow, validTxList, lastBlock.Hash);
+            string validMerkle = hashingService.GetMerkleTree(validBlock.Transactions);
+
+            Console.WriteLine("[Тест] Чесно підбираємо Nonce під реальну складність мережі для тестового блоку...");
+
+            // Чесний швидкий майнінг для тесту
+            string requiredZeros = new string('0', blockChain.Difficulty);
+            validBlock.Nonce = 0;
+            while (true)
+            {
+                string hash = hashingService.ComputeHash(validBlock, validMerkle);
+                if (hash.StartsWith(requiredZeros))
+                {
+                    validBlock.Hash = hash;
+                    break;
+                }
+                validBlock.Nonce++;
+            }
+
+            Console.WriteLine($"[Тест] Знайдено валідний хеш: {validBlock.Hash} з Nonce: {validBlock.Nonce}");
+            Console.WriteLine("[Мережа] Надсилання повністю валідного Блоку #3...");
+            FakeNetworkTrigger(validBlock, blockChain, hashingService);
+        }
+        private static void FakeNetworkTrigger(Block block, BlockChainService blockChain, HashingService hashingService)
+        {
+            // Сюди вставляється логіка з HandleNewBlockMessage для перевірки всередині консольного тесту
+            string merkleRoot = hashingService.GetMerkleTree(block.Transactions);
+            string calculatedHash = hashingService.ComputeHash(block, merkleRoot);
+
+            if (!string.Equals(calculatedHash, block.Hash, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[SECURITY] 🚨 Обнаружен фейковый блок! (Причина: Хеш підроблено)");
+                Console.ResetColor();
+                return;
+            }
+
+            string targetZeros = new string('0', blockChain.Difficulty);
+            if (!calculatedHash.StartsWith(targetZeros))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[SECURITY] 🚨 Обнаружен фейковый block! (Причина: Немає підтвердження складності PoW)");
+                Console.ResetColor();
+                return;
+            }
+
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"[P2P Успіх] Мережевий блок #{block.Index} успішно верифіковано та додано!");
+            Console.ResetColor();
+        }
     }
 }

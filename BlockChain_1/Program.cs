@@ -18,6 +18,7 @@ namespace BlockChain_1
             var blockChain1 = new BlockChainService(initialDifficulty: 4);
             var transactionService = new TransactionService(blockChain1.Chain);
             var walletService = new WalletService(blockChain1.Chain);
+            var hashingService = new HashingService();
 
             //Walets
             var walletAlice = walletService.CreateWallet("Alice");
@@ -29,7 +30,7 @@ namespace BlockChain_1
             Console.WriteLine("Input port for this node: ");
             var port = Console.ReadLine();
 
-            var p2pService = new TcpP2pService(blockChain1, int.Parse(port));
+            var p2pService = new TcpP2pService(blockChain1, hashingService, int.Parse(port));
             p2pService.Start();
 
             //Display wallet addresses
@@ -57,6 +58,7 @@ namespace BlockChain_1
             Console.WriteLine("15. Test: Reliable Economy (надійна економіка)");
             Console.WriteLine("16. Test: Захист Мемпулу, RBF та Тіньові баланси");
             Console.WriteLine("17. Test: Макроекономіка блокчейну (Халвінг, Дилема, Спалювання)");
+            Console.WriteLine("18. Test: Валидация сетевых блоков (P2P Security)"); 
 
             //Main loop
             while (true)
@@ -152,6 +154,9 @@ namespace BlockChain_1
                         break;
                     case "17":
                         await Tests.TestMacroeconomics(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+                    case "18":
+                        Tests.TestP2pSecurity(blockChain1, hashingService); // Передай сюди інстанс hashingService
                         break;
 
                     default:
