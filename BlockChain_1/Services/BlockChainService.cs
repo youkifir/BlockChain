@@ -599,5 +599,86 @@ namespace BlockChain_1.Services
 
             return balance;
         }
+        public decimal GetCurrentReward()
+        {
+            decimal baseReward = 50m;
+
+            // Визначаємо кількість халвінгів: кожні 3 блоки нагорода ділиться на 2
+            int halvingCount = Chain.Count / 3;
+
+            decimal currentReward = baseReward;
+            for (int i = 0; i < halvingCount; i++)
+            {
+                currentReward /= 2m;
+            }
+
+            // Якщо нагорода впала менше ніж 1 монета — повна зупинка емісії
+            if (currentReward < 1m)
+            {
+                return 0m;
+            }
+
+            return currentReward;
+        }
+        public async Task<bool> MineBlockWithMacroeconomics(string minerAddress)
+        {
+            decimal systemReward = GetCurrentReward();
+
+            // Підраховуємо загальну суму комісій у мемпулі
+            decimal totalFees = 0m;
+            lock (_pendingTransactions)
+            {
+                totalFees = _pendingTransactions.Sum(tx => tx.Fee);
+            }
+
+            // --- ЧАСТИНА 2: ДИЛЕМА МАЙНЕРА ---
+            // Якщо емісія нуль І в мемпулі немає платних транзакцій — робота збиткова
+            if (systemReward == 0m && totalFees == 0m)
+            {
+                throw new InvalidOperationException("Майнінг скасовано: блок нерентабельний (немає нагороди та комісій).");
+            }
+
+            // --- ЧАСТИНА 3: СПАЛЮВАННЯ КОМІСІЙ (EIP-1559) ---
+            // Майнер отримує системну нагороду + лише 50% від усіх комісій. Інші 50% спалюються.
+            decimal burnedFees = totalFees * 0.5m;
+            decimal minerMinerFeeReward = totalFees - burnedFees;
+            decimal totalMinerReward = systemReward + minerMinerFeeReward;
+
+            // Формуємо фінальний список транзакцій для блоку
+            var blockTransactions = new List<Transaction>();
+
+            // Створюємо COINBASE транзакцію-нагороду, якщо вона більша за 0
+            if (totalMinerReward > 0m)
+            {
+                var coinbaseTx = new Transaction("System", minerAddress, totalMinerReward, null)
+                {
+                    Type = TransactionType.Transfer,
+                    TokenTicker = "BASE",
+                    Fee = 0m
+                };
+                blockTransactions.Add(coinbaseTx);
+            }
+
+            // Забираємо транзакції з мемпулу
+            lock (_pendingTransactions)
+            {
+                blockTransactions.AddRange(_pendingTransactions);
+                _pendingTransactions.Clear(); // Очищаємо мемпул
+            }
+
+            // Процес майнінгу блоку (використовуємо твій швидкий або стандартний процесор)
+            var lastBlock = Chain[Chain.Count - 1];
+            var newBlock = new Block(Chain.Count, DateTime.UtcNow, blockTransactions, lastBlock.Hash);
+
+            await ProcessBlockMiningAsync(newBlock);
+            Chain.Add(newBlock);
+
+            if (totalFees > 0m)
+            {
+                Console.WriteLine($"[🔥 EIP-1559] Всього комісій у блоці: {totalFees} BASE. Нараховано майнеру: {minerMinerFeeReward} BASE. Спалено назавжди: {burnedFees} BASE.");
+            }
+
+            return true;
+        }
     }
 }

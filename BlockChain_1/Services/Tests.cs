@@ -552,5 +552,113 @@ namespace BlockChain_1.Services
             // 2. ВІДНОВЛЮЄМО оригінальний префікс для нормальної роботи блокчейну поза цим тестом
             blockChain.VanityPrefix = backupPrefix;
         }
+        public static async Task TestMacroeconomics(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
+        {
+            Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Макроекономіка блокчейну ===");
+
+            // Вимикаємо "cafe" майнінг на час швидкого тесту халвінгу
+            string backupPrefix = blockChain.VanityPrefix;
+            blockChain.VanityPrefix = "0";
+
+            // Очищаємо мемпул для чистоти експерименту
+            blockChain.ClearMempool();
+
+            // ==========================================
+            // 📉 СЦЕНАРІЙ 1: Тест Халвінгу
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 1: Базовий Халвінг (Зменшення нагороди) ---");
+            Console.WriteLine($"Початкова нагорода за блок: {blockChain.GetCurrentReward()} BASE");
+
+            Console.WriteLine("[Майнінг] Запускаємо цикл майнінгу до повної зупинки емісії (нагорода = 0)...");
+
+            while (true)
+            {
+                decimal rewardBefore = blockChain.GetCurrentReward();
+                int currentIdx = blockChain.Chain.Count;
+
+                // Майнимо порожні блоки через наш економічний метод
+                await blockChain.MineBlockWithMacroeconomics(walletBob.Address);
+
+                Console.WriteLine($"Блок #{currentIdx} замайнено. Нагорода: {rewardBefore} BASE.");
+
+                if (blockChain.GetCurrentReward() == 0m)
+                {
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"[!] Емісію зупинено на блоці #{blockChain.Chain.Count}. Поточна нагорода: {blockChain.GetCurrentReward()} BASE.");
+                    Console.ResetColor();
+                    break;
+                }
+            }
+
+            // ==========================================
+            // 🛑 СЦЕНАРІЙ 2: Дилема Майнера
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 2: Дилема Майнера (Відмова від порожніх блоків) ---");
+            Console.WriteLine($"Стан мережі: Системна нагорода = {blockChain.GetCurrentReward()} BASE, Мемпул = {blockChain.GetMempoolCount()} транзакцій.");
+
+            try
+            {
+                Console.WriteLine("[Майнінг] Спроба замайнити порожній блок, коли емісія закінчилась (нагорода = 0, мемпул порожній)...");
+
+                // Цей виклик НАВМИСНО має викинути помилку:
+                await blockChain.MineBlockWithMacroeconomics(walletBob.Address);
+
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine(">> [ПОМИЛКА]: Майнер погодився безкоштовно працювати і замайнив пустий блок!");
+                Console.ResetColor();
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Рушій блокчейну перехопив дилему: {ex.Message}");
+                Console.ResetColor();
+            }
+
+            // ==========================================
+            // 🔥 СЦЕНАРІЙ 3: Спалювання комісій (EIP-1559)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 3: Спалювання комісій (EIP-1559) ---");
+
+            // Перевіряємо баланс Боба (він майнив попередні блоки, у нього точно є гроші)
+            decimal bobBalanceBefore = blockChain.GetBalance(walletBob.Address);
+            decimal aliceBalanceBefore = blockChain.GetBalance(walletAlice.Address);
+            Console.WriteLine($"Баланс Боба (Відправник) до транзакції: {bobBalanceBefore} BASE");
+            Console.WriteLine($"Баланс Аліси (Майнер) до блоку: {aliceBalanceBefore} BASE");
+
+            // Боб відправляє Алісі 10 монет, але ставить жирну комісію Fee = 10 BASE
+            decimal txAmount = 10m;
+            decimal txFee = 10m;
+
+            Console.WriteLine($"[Транзакція] Боб надсилає Алісі {txAmount} BASE з комісією Fee = {txFee} BASE...");
+            var tx = transactionService.CreateTransaction(walletBob, walletAlice.Address, txAmount, fee: txFee);
+            blockChain.AddTransactionToMemPool(tx);
+
+            // Аліса виступає в ролі майнера цього блоку
+            Console.WriteLine("[Майнінг] Аліса бере блок в роботу (блок тепер рентабельний завдяки комісії Боба)...");
+            await blockChain.MineBlockWithMacroeconomics(walletAlice.Address);
+
+            decimal bobBalanceAfter = blockChain.GetBalance(walletBob.Address);
+            decimal aliceBalanceAfter = blockChain.GetBalance(walletAlice.Address);
+
+            Console.WriteLine($"\nБаланс Боба після: {bobBalanceAfter} BASE (Зменшився на {bobBalanceBefore - bobBalanceAfter} BASE: сума + комісія)");
+            Console.WriteLine($"Баланс Аліси після: {aliceBalanceAfter} BASE (Збільшився на {aliceBalanceAfter - aliceBalanceBefore} BASE)");
+
+            // Чистий дохід Аліси має становити: +10 BASE (сама транзакція) + 5 BASE (50% від комісії 10 BASE) = 15 BASE
+            decimal aliceNetGain = aliceBalanceAfter - aliceBalanceBefore;
+
+            if (aliceNetGain == (txAmount + (txFee * 0.5m)))
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Алгоритм EIP-1559 працює ідеально! З {txFee} BASE комісії майнер отримав тільки 5 BASE. Інші 5 BASE було успішно спалено.");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.WriteLine($">> [ПОМИЛКА] Невідповідність розподілу комісії. Майнер отримав: {aliceNetGain - txAmount} замість 5.");
+            }
+
+            // Відновлюємо оригінальний префікс "cafe"
+            blockChain.VanityPrefix = backupPrefix;
+        }
     }
 }

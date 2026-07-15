@@ -56,6 +56,7 @@ namespace BlockChain_1
             Console.WriteLine("14. Run Exam: Епоха Смарт-Контрактів");
             Console.WriteLine("15. Test: Reliable Economy (надійна економіка)");
             Console.WriteLine("16. Test: Захист Мемпулу, RBF та Тіньові баланси");
+            Console.WriteLine("17. Test: Макроекономіка блокчейну (Халвінг, Дилема, Спалювання)");
 
             //Main loop
             while (true)
@@ -148,6 +149,9 @@ namespace BlockChain_1
                         break;
                     case "16":
                         await Tests.TestMempoolProtectionAndRbf(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+                    case "17":
+                        await Tests.TestMacroeconomics(blockChain1, transactionService, walletAlice, walletBob);
                         break;
 
                     default:
