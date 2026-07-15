@@ -28,6 +28,9 @@ namespace BlockChain_1.Services
         private int maxTransactionsAmount { get; set; } = 10;
         private int _halvingInterval { get; set; } = 2;
         private const decimal ICO_FEE = 100m;
+        public decimal MaxSupply { get; } = 1000m;
+        public decimal TotalMinted { get; private set; } = 0m;
+        public int MaxMempoolSize { get; set; } = 5;
 
         //Vanity prefix for block hashes
         public string VanityPrefix { get; set; } = "cafe";
@@ -122,38 +125,89 @@ namespace BlockChain_1.Services
                 AdjustDifficulty();
             }
         }
-        public void AddTransactionToMemPool(Transaction transaction)
+        public void AddTransactionToMemPool(Transaction newTx)
         {
-            var validation = _transactionService.ValidateTransaction(transaction);
-
-            if (!validation.IsValid)
-                throw new ArgumentException(validation.ErrorMessage);
-
-            if (transaction.From != "COINBASE")
+            // Пропускаємо системні транзакції
+            if (newTx.From == "System")
             {
-                if (transaction.Type == TransactionType.Transfer)
-                {
-                    decimal tokenBalance =
-                        _walletService.GetTokenBalance(transaction.From, transaction.TokenTicker);
-
-                    decimal baseBalance =
-                        _walletService.GetBalance(transaction.From);
-
-                    if (tokenBalance < transaction.Amount)
-                        throw new InvalidOperationException("Not enough token balance.");
-
-                    if (baseBalance < transaction.Fee)
-                        throw new InvalidOperationException("Not enough BASE for fee.");
-                }
-
-                if (transaction.Type == TransactionType.ICO)
-                {
-                    if (_walletService.GetBalance(transaction.From) < ICO_FEE)
-                        throw new InvalidOperationException("Not enough BASE for ICO.");
-                }
+                lock (_pendingTransactions) { _pendingTransactions.Add(newTx); }
+                return;
             }
 
-            _pendingTransactions.Add(transaction);
+            // Перевірка 1: Тіньовий баланс (Частина 3)
+            decimal pendingBalance = GetPendingBalance(newTx.From);
+            if (pendingBalance < (newTx.Amount + newTx.Fee))
+            {
+                throw new InvalidOperationException(
+                    $"[Тіньовий баланс] Відхилено. Реальний баланс враховує минулі транзакції в мемпулі. " +
+                    $"Доступний тіньовий баланс: {pendingBalance} BASE. Спроба витратити: {newTx.Amount + newTx.Fee} BASE.");
+            }
+
+            lock (_pendingTransactions)
+            {
+                // Перевірка 2: Replace-By-Fee (RBF) (Частина 2)
+                var duplicateTx = _pendingTransactions.FirstOrDefault(tx =>
+                    string.Equals(tx.From, newTx.From, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(tx.To, newTx.To, StringComparison.OrdinalIgnoreCase) &&
+                    tx.Amount == newTx.Amount);
+
+                if (duplicateTx != null)
+                {
+                    if (newTx.Fee > duplicateTx.Fee)
+                    {
+                        _pendingTransactions.Remove(duplicateTx);
+                        _pendingTransactions.Add(newTx);
+                        Console.WriteLine($"[RBF Успіх] Транзакцію прискорено! Стара комісія: {duplicateTx.Fee} -> Нова комісія: {newTx.Fee}");
+                        return;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"[RBF Відхилено] Така транзакція вже є в мемпулі. " +
+                            $"Нова комісія ({newTx.Fee}) має бути БІЛЬШОЮ за стару ({duplicateTx.Fee}).");
+                    }
+                }
+
+                // Перевірка 3: Mempool Eviction (Частина 1)
+                if (_pendingTransactions.Count >= MaxMempoolSize)
+                {
+                    var cheapestTx = _pendingTransactions
+                        .Where(tx => tx.From != "System")
+                        .OrderBy(tx => tx.Fee)
+                        .FirstOrDefault();
+
+                    if (cheapestTx != null && newTx.Fee > cheapestTx.Fee)
+                    {
+                        _pendingTransactions.Remove(cheapestTx);
+                        _pendingTransactions.Add(newTx);
+                        Console.WriteLine($"[Mempool Eviction] Мемпул переповнений. Витіснено дешевшу транзакцію з Fee={cheapestTx.Fee}. Додано нову з Fee={newTx.Fee}.");
+                        return;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"[Mempool Full] Мемпул заповнений ({MaxMempoolSize}/{MaxMempoolSize}). " +
+                            $"Комісія нової транзакції ({newTx.Fee}) занадто мала для витіснення інших.");
+                    }
+                }
+
+                // Якщо ліміти не перевищені і дублікатів немає — просто додаємо
+                _pendingTransactions.Add(newTx);
+            }
+        }
+        public void ClearMempool()
+        {
+            lock (_pendingTransactions)
+            {
+                _pendingTransactions.Clear();
+            }
+        }
+        public int GetMempoolCount()
+        {
+            lock (_pendingTransactions)
+            {
+                return _pendingTransactions.Count;
+            }
         }
         public void ProcessTransactions(List<Transaction> incomingTransactions, string minerAddress = null)
         {
@@ -397,7 +451,7 @@ namespace BlockChain_1.Services
             {
                 var currentTotalWork = getChainWeight(Chain);
                 var externalTotalWork = getChainWeight(externalChain);
-                if(externalTotalWork > currentTotalWork)
+                if (externalTotalWork > currentTotalWork)
                 {
                     return false;
                 }
@@ -436,6 +490,114 @@ namespace BlockChain_1.Services
             {
                 throw new InvalidOperationException($"Не вдалося замайнити блок #{block.Index}");
             }
+        }
+        public bool ValidateEconomy()
+        {
+            var allAddresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var block in Chain)
+            {
+                foreach (var tx in block.Transactions)
+                {
+                    if (!string.IsNullOrEmpty(tx.From) && tx.From != "System")
+                        allAddresses.Add(tx.From);
+
+                    if (!string.IsNullOrEmpty(tx.To))
+                        allAddresses.Add(tx.To);
+                }
+            }
+
+            decimal totalCirculatingSupply = 0m;
+            foreach (var address in allAddresses)
+            {
+                totalCirculatingSupply += GetBalance(address);
+            }
+
+            Console.WriteLine($"[Аудит] Всього емітовано (TotalMinted): {TotalMinted} BASE");
+            Console.WriteLine($"[Аудит] Всього на рахунках користувачів: {totalCirculatingSupply} BASE");
+
+            return totalCirculatingSupply == TotalMinted;
+        }
+        public async Task<bool> AddBlockWithValidation(List<Transaction> transactions, string minerAddress)
+        {
+            var tempBalances = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var tx in transactions)
+            {
+                if (tx.From == "System") continue;
+
+                if (!tempBalances.ContainsKey(tx.From))
+                {
+                    tempBalances[tx.From] = GetBalance(tx.From);
+                }
+
+                decimal totalDeduction = tx.Amount + tx.Fee;
+
+                if (tempBalances[tx.From] < totalDeduction)
+                {
+                    throw new InvalidOperationException(
+                        $"[Double Spend Blocked] Тимчасовий баланс адреси {tx.From} ({tempBalances[tx.From]} BASE) " +
+                        $"недостатній для транзакції на суму {tx.Amount} BASE та комісію {tx.Fee} BASE!");
+                }
+
+                tempBalances[tx.From] -= totalDeduction;
+            }
+
+            decimal reward = 0m;
+            if (TotalMinted < MaxSupply)
+            {
+                decimal defaultReward = 50m;
+                if (TotalMinted + defaultReward > MaxSupply)
+                {
+                    reward = MaxSupply - TotalMinted;
+                }
+                else
+                {
+                    reward = defaultReward;
+                }
+
+                TotalMinted += reward;
+            }
+
+            var finalTransactions = new List<Transaction>();
+            if (reward > 0)
+            {
+                var rewardTx = new Transaction("System", minerAddress, reward, null)
+                {
+                    Type = TransactionType.Transfer,
+                    TokenTicker = "BASE",
+                    Fee = 0
+                };
+                finalTransactions.Add(rewardTx);
+            }
+
+            finalTransactions.AddRange(transactions);
+
+            var lastBlock = Chain[Chain.Count - 1];
+            var newBlock = new Block(Chain.Count, DateTime.UtcNow, finalTransactions, lastBlock.Hash);
+
+            await ProcessBlockMiningAsync(newBlock);
+            Chain.Add(newBlock);
+
+            return true;
+        }
+        public decimal GetPendingBalance(string address)
+        {
+            decimal balance = GetBalance(address);
+
+            // Віднімаємо всі витрати, які вже підписані, але ще висять у мемпулі
+            lock (_pendingTransactions)
+            {
+                foreach (var tx in _pendingTransactions)
+                {
+                    if (string.Equals(tx.From, address, StringComparison.OrdinalIgnoreCase))
+                    {
+                        balance -= (tx.Amount + tx.Fee);
+                    }
+                }
+            }
+
+            return balance;
         }
     }
 }

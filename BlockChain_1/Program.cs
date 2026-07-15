@@ -54,6 +54,8 @@ namespace BlockChain_1
             Console.WriteLine("12. Connect to another node");
             Console.WriteLine("13. Test: Vanity Wallets & Web3-Авторизація");
             Console.WriteLine("14. Run Exam: Епоха Смарт-Контрактів");
+            Console.WriteLine("15. Test: Reliable Economy (надійна економіка)");
+            Console.WriteLine("16. Test: Захист Мемпулу, RBF та Тіньові баланси");
 
             //Main loop
             while (true)
@@ -140,6 +142,12 @@ namespace BlockChain_1
 
                     case "14":
                         await Tests.RunExamSmartContracts(blockChain1, transactionService, walletService, walletAlice, walletBob);
+                        break;
+                    case "15":
+                        await Tests.TestReliableEconomy(blockChain1, transactionService, walletAlice, walletBob);
+                        break;
+                    case "16":
+                        await Tests.TestMempoolProtectionAndRbf(blockChain1, transactionService, walletAlice, walletBob);
                         break;
 
                     default:

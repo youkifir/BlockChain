@@ -150,7 +150,6 @@ namespace BlockChain_1.Services
 
             return wallet.Sign(messageBytes);
         }
-
         public bool VerifyMessage(string claimedAddress, byte[] publicKey, string message, byte[] signature)
         {
             if (string.IsNullOrWhiteSpace(claimedAddress) || publicKey == null || message == null || signature == null)
@@ -187,6 +186,5 @@ namespace BlockChain_1.Services
                 return false;
             }
         }
-
     }
 }

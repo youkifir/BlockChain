@@ -312,5 +312,245 @@ namespace BlockChain_1.Services
             blockChain.PrintPortfolio(walletBob.Address);
             Console.WriteLine("========================================");
         }
+        public static async Task TestReliableEconomy(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
+        {
+            Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Надійна економіка (Double Spend, Hard Cap та Аудит) ===");
+
+            // Зберігаємо старий префікс, щоб не зламати загальну логіку програми після тесту
+            string backupPrefix = blockChain.VanityPrefix;
+
+            // ТИМЧАСОВО вимикаємо складний Vanity-майнінг для швидкого проходження циклу Hard Cap
+            // Якщо у твоєму коді метод майнінгу орієнтується на blockChain.VanityPrefix, робимо його простим (наприклад, "0")
+            blockChain.VanityPrefix = "0";
+
+            // Гарантуємо, що Аліса має баланс для тесту
+            if (blockChain.GetBalance(walletAlice.Address) < 50m)
+            {
+                await blockChain.AddBlockWithValidation(new List<Transaction>(), walletAlice.Address);
+            }
+
+            Console.WriteLine($"Поточний баланс Аліси: {blockChain.GetBalance(walletAlice.Address)} BASE");
+
+            // ==========================================
+            // 🛑 СЦЕНАРІЙ 1: Симуляція атаки Double Spend
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 1: Захист від Подвійної витрати (Double Spend) ---");
+
+            var tx1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 50m, fee: 0m);
+            var tx2 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 50m, fee: 0m);
+            var txList = new List<Transaction> { tx1, tx2 };
+
+            try
+            {
+                Console.WriteLine("[Атака] Спроба надіслати в один блок дві транзакції по 50 BASE від Аліси...");
+                await blockChain.AddBlockWithValidation(txList, walletBob.Address);
+                Console.WriteLine(">> [ПОМИЛКА]: Блокчейн прийняв Double Spend транзакції!");
+            }
+            catch (InvalidOperationException ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Атаку Double Spend заблоковано: {ex.Message}");
+                Console.ResetColor();
+            }
+
+            // ==========================================
+            // 🛑 СЦЕНАРІЙ 2: Тестування Hard Cap (Жорсткий ліміт)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 2: Жорсткий ліміт емісії (Hard Cap) ---");
+            Console.WriteLine($"Старт емісії (TotalMinted): {blockChain.TotalMinted} / {blockChain.MaxSupply} BASE");
+            Console.WriteLine("[Майнінг] Автоматичний випуск блоків до ліміту в 1000 BASE...");
+
+            int blocksMined = 0;
+            while (blockChain.TotalMinted < blockChain.MaxSupply)
+            {
+                // Майнимо порожні блоки. Завдяки префіксу "0" це відбудеться миттєво без спаму "cafe"
+                await blockChain.AddBlockWithValidation(new List<Transaction>(), walletBob.Address);
+                blocksMined++;
+            }
+
+            Console.WriteLine($"[!] Успішно замайнено {blocksMined} блоків для досягнення ліміту.");
+            Console.WriteLine($"Поточна емісія після циклу: {blockChain.TotalMinted} / {blockChain.MaxSupply} BASE");
+
+            // Пробуємо замайнити ще один блок ПІСЛЯ досягнення ліміту
+            decimal balanceBeforeNextMine = blockChain.GetBalance(walletBob.Address);
+            await blockChain.AddBlockWithValidation(new List<Transaction>(), walletBob.Address);
+            decimal balanceAfterNextMine = blockChain.GetBalance(walletBob.Address);
+
+            if (balanceBeforeNextMine == balanceAfterNextMine)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Hard Cap працює! Після досягнення {blockChain.MaxSupply} BASE нагорода майнеру більше НЕ нараховується.");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.WriteLine(">> [ПОМИЛКА]: Емісія перевищила встановлений Hard Cap!");
+            }
+
+            // ==========================================
+            // 🛑 СЦЕНАРІЙ 3: Інспектор аудиту (Proof of Reserves)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 3: Перевірка чесності економіки (ValidateEconomy) ---");
+            bool isEconomyValid = blockChain.ValidateEconomy();
+
+            if (isEconomyValid)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine(">> [РЕЗУЛЬТАТ АУДИТУ]: True (Усі монети чесно розподілені, розбіжностей немає).");
+                Console.ResetColor();
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine(">> [РЕЗУЛЬТАТ АУДИТУ]: False (Знайдено розбіжності в балансах!)");
+                Console.ResetColor();
+            }
+
+            // ВІДНОВЛЮЄМО оригінальний префікс для нормальної роботи інших функцій програми
+            blockChain.VanityPrefix = backupPrefix;
+        }
+        public static async Task TestMempoolProtectionAndRbf(BlockChainService blockChain, TransactionService transactionService, Wallet walletAlice, Wallet walletBob)
+        {
+            Console.WriteLine("\n=== ЛАБОРАТОРНА РОБОТА: Захист Мемпулу, RBF та Тіньові баланси ===");
+
+            // 1. СЕКРЕТ ЧИСТОГО ВИВОДУ: Зберігаємо старий префікс і вимикаємо складний майнінг "cafe"
+            string backupPrefix = blockChain.VanityPrefix;
+            blockChain.VanityPrefix = "0"; // Тепер блоки для тестів будуть майнитися миттєво без спаму в консоль
+
+            // Очищаємо мемпул перед початком тесту
+            blockChain.ClearMempool();
+            blockChain.MaxMempoolSize = 5;
+
+            // Гарантуємо баланс Аліси для тестів спаму (майнимо блоки миттєво)
+            while (blockChain.GetBalance(walletAlice.Address) < 200m)
+            {
+                // Викликай свій стандартний метод майнінгу блоку, наприклад:
+                await blockChain.AddBlockWithValidation(new List<Transaction>(), walletAlice.Address);
+            }
+
+            Console.WriteLine($"Стартовий баланс Аліси: {blockChain.GetBalance(walletAlice.Address)} BASE");
+
+            // ==========================================
+            // 🗑️ СЦЕНАРІЙ 1: Спам-атака (Mempool Size Limit)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 1: Спам-атака (Лише 5 безкоштовних транзакцій) ---");
+            int acceptedSpam = 0;
+            for (int i = 1; i <= 10; i++)
+            {
+                try
+                {
+                    var tx = transactionService.CreateTransaction(walletAlice, walletBob.Address, 0.01m, fee: 0m);
+                    blockChain.AddTransactionToMemPool(tx);
+                    acceptedSpam++;
+                }
+                catch (Exception ex)
+                {
+                    // Не спамимо кожну помилку, покажемо фінальний результат
+                }
+            }
+            Console.WriteLine($"[!] Спроба надіслати 10 спам-транзакцій з Fee=0.");
+            Console.WriteLine($"Разом транзакцій у мемпулі: {blockChain.GetMempoolCount()} (Очікується: 5)");
+
+            // ==========================================
+            // 🗑️ СЦЕНАРІЙ 2: Витіснення (Mempool Eviction)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 2: Витіснення дешевих транзакцій (Mempool Eviction) ---");
+            try
+            {
+                Console.WriteLine("[Надсилання] Спроба відправити транзакцію з високою комісією Fee = 10...");
+                var expensiveTx = transactionService.CreateTransaction(walletAlice, walletBob.Address, 1m, fee: 10m);
+                blockChain.AddTransactionToMemPool(expensiveTx);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Транзакція успішно витіснила спам. Поточний розмір мемпулу: {blockChain.GetMempoolCount()}");
+                Console.ResetColor();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($">> [ПОМИЛКА] Не вдалося витіснити транзакцію: {ex.Message}");
+            }
+
+            // ==========================================
+            // 🚀 СЦЕНАРІЙ 3: Replace-By-Fee (RBF)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 3: Прискорення транзакцій (Replace-By-Fee) ---");
+            blockChain.ClearMempool();
+
+            var rbfTx1 = transactionService.CreateTransaction(walletAlice, walletBob.Address, 5m, fee: 1m);
+            blockChain.AddTransactionToMemPool(rbfTx1);
+            Console.WriteLine($"[1] Додано базову транзакцію: 5 BASE, Fee: 1 BASE. Розмір мемпулу: {blockChain.GetMempoolCount()}");
+
+            try
+            {
+                Console.WriteLine("[RBF Атака] Спроба надіслати таку ж транзакцію, але з рівною комісією Fee = 1...");
+                var rbfTxBad = transactionService.CreateTransaction(walletAlice, walletBob.Address, 5m, fee: 1m);
+                blockChain.AddTransactionToMemPool(rbfTxBad);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[-] Очікувано відхилено: {ex.Message}");
+            }
+
+            try
+            {
+                Console.WriteLine("[RBF Прискорення] Спроба надіслати таку ж транзакцію з Fee = 15...");
+                var rbfTxGood = transactionService.CreateTransaction(walletAlice, walletBob.Address, 5m, fee: 15m);
+                blockChain.AddTransactionToMemPool(rbfTxGood);
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Перевірка розміру мемпулу після RBF: {blockChain.GetMempoolCount()} (Очікується: 1, відбулася заміна)");
+                Console.ResetColor();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($">> [ПОМИЛКА] RBF не спрацював: {ex.Message}");
+            }
+
+            // ==========================================
+            // ⭐️ СЦЕНАРІЙ 4: Тіньовий баланс (Pending Balance)
+            // ==========================================
+            Console.WriteLine("\n--- Сценарій 4: Захист через Тіньові баланси (Pending Balance) ---");
+            blockChain.ClearMempool();
+
+            // Створюємо гаманець
+            var testWallet = new WalletService(blockChain.Chain).CreateWallet("TestWallet");
+
+            // Переказуємо йому гроші
+            var fundTx = transactionService.CreateTransaction(walletAlice, testWallet.Address, 39m, fee: 1m);
+
+            // Замість виклику MineBlock із префіксом "cafe", пакуємо через наш швидкий метод зі зміненим префіксом
+            await blockChain.AddBlockWithValidation(new List<Transaction> { fundTx }, walletAlice.Address);
+
+            Console.WriteLine($"Реальний початковий баланс нового гаманця: {blockChain.GetBalance(testWallet.Address)} BASE (Очікується: 39)");
+
+            try
+            {
+                Console.WriteLine("[Транзакція 1] Спроба відправити 28 BASE + 2 BASE Fee (Разом: 30)...");
+                var tx1 = transactionService.CreateTransaction(testWallet, walletBob.Address, 28m, fee: 2m);
+                blockChain.AddTransactionToMemPool(tx1);
+                Console.WriteLine($"[+] Перша транзакція в мемпулі. Тіньовий залишок: {blockChain.GetPendingBalance(testWallet.Address)} BASE");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[-] Помилка: {ex.Message}");
+            }
+
+            try
+            {
+                Console.WriteLine("[Транзакція 2] Спроба ОДРАЗУ відправити ще 18 BASE + 2 BASE Fee (Разом: 20)...");
+                var tx2 = transactionService.CreateTransaction(testWallet, walletBob.Address, 18m, fee: 2m);
+                blockChain.AddTransactionToMemPool(tx2);
+                Console.WriteLine(">> [ПОМИЛКА]: Блокчейн дозволив витратити тіньовий нуль!");
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($">> [УСПІХ] Другу транзакцію заблоковано через брак тіньового балансу.");
+                Console.ResetColor();
+            }
+
+            blockChain.ClearMempool();
+
+            // 2. ВІДНОВЛЮЄМО оригінальний префікс для нормальної роботи блокчейну поза цим тестом
+            blockChain.VanityPrefix = backupPrefix;
+        }
     }
 }
